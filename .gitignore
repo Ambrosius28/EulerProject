@@ -1,0 +1,13 @@
+# Generated figures
+*.png
+*.gif
+*.jpg
+*.jpeg
+*.pdf
+
+# Animation outputs
+animations/
+
+# Temporary files
+*.tmp
+*.log

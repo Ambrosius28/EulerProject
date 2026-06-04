@@ -1,0 +1,13 @@
+[deps]
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+OrdinaryDiffEq = "1dea7af3-3e70-54e6-95c3-0bf5283fa5ed"
+Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
+Polynomials = "f27b6e38-b328-58d1-80ce-0feddd5e7a45"
+PrettyTables = "08abe8d2-0d0c-5749-adfa-8a2ac140af0d"
+PythonPlot = "274fc56d-3b97-40fa-a1cd-1b4a50311bf9"
+SummationByPartsOperators = "9f78cca6-572e-554e-b819-917d2f1cf240"
+ToeplitzMatrices = "c751599d-da0a-543b-9d20-d0a503d91d24"
+Trixi = "a7f1ee26-1774-49b1-8366-f1abc58fbfcb"
