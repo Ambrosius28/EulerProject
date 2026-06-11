@@ -5,6 +5,7 @@
 using LinearAlgebra, Printf, Statistics
 using Polynomials
 using Plots
+using Trixi
 
 # ==============================================================================
 # SECTION 1 — Euler flux and wave speed
@@ -247,5 +248,131 @@ end
 # ==============================================================================
 
 function uniform_omegas(M::Int)
-    return collect(range(1.0 / (2M), 1.0 - 1.0 / (2M), length=M))
+    domega = 1.0 / M
+    return collect(range(domega / 2.0, 1.0 - domega / 2.0, length=M))
+end
+
+function legendre_lobatto_basis(M::Int)
+    polydeg_stoch = M - 1
+    return LobattoLegendreBasis(polydeg_stoch)
+end
+
+function legendre_lobatto_omegas(M::Int)
+    if M == 1
+        return [0.5]
+    end
+
+    basis_haupt = legendre_lobatto_basis(M)
+
+    nodes_reference = basis_haupt.nodes
+    nodes_omega = 0.5 .* (nodes_reference .+ 1.0)
+
+    return collect(nodes_omega)
+end
+# ==============================================================================
+# SECTION 6 — Ansatz-space reconstruction 
+# ==============================================================================
+
+function constant_maker(omega::Float64,
+                        all_omegas::Vector{Float64},
+                        y_data::Vector{Float64})
+
+    idx = argmin(abs.(all_omegas .- omega))
+    return y_data[idx]
+end
+
+
+function cubic_maker(omega::Float64,
+                     all_omegas::Vector{Float64},
+                     y_data::Vector{Float64})
+
+    n = length(all_omegas)
+
+    if n == 1
+        return y_data[1]
+    elseif n == 2
+        x0, x1 = all_omegas[1], all_omegas[2]
+        return y_data[1] + (y_data[2] - y_data[1]) * (omega - x0) / (x1 - x0)
+    end
+
+    x = all_omegas
+    y = y_data
+    h = diff(x)
+
+    A = zeros(n, n)
+    rhs = zeros(n)
+
+    A[1, 1] = 1.0
+    A[n, n] = 1.0
+
+    for i in 2:n-1
+        A[i, i-1] = h[i-1]
+        A[i, i]   = 2.0 * (h[i-1] + h[i])
+        A[i, i+1] = h[i]
+
+        rhs[i] = 6.0 * (
+            (y[i+1] - y[i]) / h[i]
+            -
+            (y[i] - y[i-1]) / h[i-1]
+        )
+    end
+
+    second_derivatives = A \ rhs
+
+    i = searchsortedlast(x, omega)
+
+    if i < 1
+        i = 1
+    elseif i >= n
+        i = n - 1
+    end
+
+    hi = x[i+1] - x[i]
+
+    a = (x[i+1] - omega) / hi
+    b = (omega - x[i]) / hi
+
+    return a * y[i] + b * y[i+1] +
+           ((a^3 - a) * second_derivatives[i] +
+            (b^3 - b) * second_derivatives[i+1]) * hi^2 / 6.0
+end
+
+
+function polynom_maker(omega::Float64,
+                       basis_haupt,
+                       y_data::Vector{Float64})
+
+    omega_mapped = 2.0 * omega - 1.0
+
+    interpolation_matrix = polynomial_interpolation_matrix(
+        basis_haupt.nodes,
+        [omega_mapped]
+    )
+
+    return (interpolation_matrix * y_data)[1]
+end
+
+
+function reconstruct_value(omega::Float64,
+                           method::String,
+                           all_omegas::Vector{Float64},
+                           y_data::Vector{Float64};
+                           basis_haupt=nothing)
+
+    if method == "constant"
+        return constant_maker(omega, all_omegas, y_data)
+
+    elseif method == "cubic"
+        return cubic_maker(omega, all_omegas, y_data)
+
+    elseif method == "polynomial"
+        if basis_haupt === nothing
+            error("Polynomial reconstruction needs basis_haupt.")
+        end
+
+        return polynom_maker(omega, basis_haupt, y_data)
+
+    else
+        error("Unknown reconstruction method: $method")
+    end
 end
