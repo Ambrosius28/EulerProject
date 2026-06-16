@@ -67,11 +67,12 @@ function physical_flux(U::Vector, γ::Float64)
     E = U[3]   # energy density
 
     u = m / ρ                          # velocity
-    p = (γ - 1) * (E - 0.5 * ρ * u^2) # pressure (ideal gas relation)
+    p = (γ - 1) * (E - 0.5 * ρ * u^2)  # pressure (ideal gas relation)
 
     # F(U) = [m,  ρu² + p,  (E+p)u]
     return [m,  ρ * u^2 + p,  (E + p) * u]
 end
+
 
 # ==============================================================================
 # SECTION 2 — Maximum local wave speed  s(U_left, U_right)
