@@ -399,10 +399,11 @@ n, testcase, M, node_type (uniform/lobatto), reconstruction_method (constant/cub
 """
 function stochastic_collocation_driver_common_dt(
     n::Int,
-    testcase::EulerTestCase,
-    M::Int;
+    M::Int,
+    testcase::EulerTestCase;
     nodes_type::String = "uniform",
     cfl_parameter::Float64 = 0.8)
+
     # --------------------------------------------------
     # Choose collocation points
     # --------------------------------------------------
@@ -425,10 +426,13 @@ function stochastic_collocation_driver_common_dt(
     # Initialize StochasticSolution
     # --------------------------------------------------
     solutions = Vector{DeterministicSolution}(undef, M)
+    U_work = [zeros(3, n+2) for _ in 1:M]
 
+    # Initialize: fill interior from IC, store only interior in history
     for (m, ω) in enumerate(omega_nodes)
-        U0 = setup_initial_condition(n, testcase; omega = ω)
-        solutions[m] = DeterministicSolution([0.0], [copy(U0)])
+        U0 = setup_initial_condition(n, testcase; omega=ω)
+        U_work[m] .= U0
+        solutions[m] = DeterministicSolution([0.0], [copy(U0[:, 2:end-1])]) #doesn't store the ghost cells
     end
 
     stochastic = StochasticSolution(omega_nodes, solutions)
@@ -440,18 +444,17 @@ function stochastic_collocation_driver_common_dt(
 
     while t < t_end
 
-        # 1. Apply BCs for each omega
+        # Re-pad and apply BCs
         for (m, ω) in enumerate(omega_nodes)
-            U = stochastic.solutions[m].U[end]
-            apply_boundary_conditions!(U, testcase, t, ω)
+            U_work[m][:, 2:end-1] .= stochastic.solutions[m].U[end]
+            apply_boundary_conditions!(U_work[m], testcase, t, ω)
         end
 
-        # 2. Compute dt for each omega, take global minimum
+        # Compute adaptive common dt as the minimum (over omega) of the cfl timesteps
         dt_min = Inf
         for (m, ω) in enumerate(omega_nodes)
-            U = stochastic.solutions[m].U[end]
             γ = testcase.gamma(ω)
-            dt_ω = cfl_timestep(U, n, cfl_parameter, dx, γ)
+            dt_ω = cfl_timestep(U_work[m], n, cfl_parameter, dx, γ)
             dt_min = min(dt_min, dt_ω)
         end
 
@@ -459,42 +462,27 @@ function stochastic_collocation_driver_common_dt(
             break
         end
 
-        # Ensure we hit t_end exactly
+        # Ensure final dt reaches exactly t_end
         if t + dt_min > t_end
             dt_min = t_end - t
         end
 
-        # 3. Advance each omega with the same dt_min
+        # compute the timestep with FV + Explicit Euler
         for (m, ω) in enumerate(omega_nodes)
-            sol = stochastic.solutions[m]
-            U   = sol.U[end]
             γ   = testcase.gamma(ω)
-
-            rhs = FV_rhs(U, dx, n, γ)
-            U_new = explicit_euler_time_step(U, rhs, dt_min)
-
-            push!(sol.U, copy(U_new))
+            rhs = FV_rhs(U_work[m], dx, n, γ)
+            U_work[m] = explicit_euler_time_step(U_work[m], rhs, dt_min)
+            push!(stochastic.solutions[m].U, copy(U_work[m][:, 2:end-1]))
         end
 
-        # 4. Update time
         t += dt_min
         for sol in stochastic.solutions
             push!(sol.times, t)
         end
     end
 
-    # Final BC update (optional)
-    for (m, ω) in enumerate(omega_nodes)
-        sol = stochastic.solutions[m]
-        U   = sol.U[end]
-        apply_boundary_conditions!(U, testcase, t, ω)
-        sol.U[end] = copy(U)
-    end
-
     return stochastic
 end
-
-
 
 
 # ==============================================================================
@@ -638,235 +626,37 @@ function tensorize(stoch::StochasticSolution)
     return U
 end
 
+"""
+MAIN SIMULATION FUNCTION
 
-
-function reconstruct_surfaces(
-    omega_fine::Vector{Float64},
-    solutions::Vector{NamedTuple},
-    reconstruction_method::String)
-
-    n = length(solutions[1].rho)
-    K = length(omega_fine)
-
-    rho_surface = zeros(n, K)
-    m_surface   = zeros(n, K)
-    E_surface   = zeros(n, K)
-
-    for k in 1:K
-
-        sol_interp = reconstruct_stochastic(
-            omega_fine[k],
-            solutions,
-            reconstruction_method
-        )
-
-        rho_surface[:,k] .= sol_interp.rho
-        m_surface[:,k]   .= sol_interp.m
-        E_surface[:,k]   .= sol_interp.E
-    end
-
-    return rho_surface, m_surface, E_surface
-end
-
-function build_density_surface(
-    omega_fine::Vector{Float64},
-    solutions,
-    reconstruction_method::String)
-
-    n = length(solutions[1].rho)
-    K = length(omega_fine)
-
-    rho_surface = zeros(n, K)
-
-    for k in 1:K
-
-        sol_interp = reconstruct_stochastic(
-            omega_fine[k],
-            solutions,
-            reconstruction_method
-        )
-
-        rho_surface[:, k] .= sol_interp.rho
-    end
-
-    return rho_surface
-end
-
-
-# ==============================================================================
-# SECTION 8 — Statistics
-# ==============================================================================
-
-function compute_statistics_surfaces(
-    rho_surface,
-    m_surface,
-    E_surface)
-
-    return (
-        mean_rho = vec(mean(rho_surface, dims=2)),
-        mean_m   = vec(mean(m_surface, dims=2)),
-        mean_E   = vec(mean(E_surface, dims=2)),
-
-        var_rho  = vec(var(rho_surface, dims=2)),
-        var_m    = vec(var(m_surface, dims=2)),
-        var_E    = vec(var(E_surface, dims=2))
-    )
-end
-
-# ==============================================================================
-# SECTION 9 - Convergence study in Ω using reconstructed stochastic surfaces
-# ==============================================================================
-
-function compute_lp_error(A, B, p)
-
-    D = abs.(A .- B)
-
-    if p == 1
-        return mean(D)
-
-    elseif p == 2
-        return sqrt(mean(D.^2))
-
-    elseif p == Inf
-        return maximum(D)
-
-    else
-        error("Unsupported p = $p")
-    end
-end
-
-
-function compute_surface_errors(
-    rho_surface,
-    m_surface,
-    E_surface,
-    rho_ref,
-    m_ref,
-    E_ref)
-
-    return (
-        rho_L1   = compute_lp_error(rho_surface, rho_ref, 1),
-        rho_L2   = compute_lp_error(rho_surface, rho_ref, 2),
-        rho_Linf = compute_lp_error(rho_surface, rho_ref, Inf),
-
-        m_L1     = compute_lp_error(m_surface, m_ref, 1),
-        m_L2     = compute_lp_error(m_surface, m_ref, 2),
-        m_Linf   = compute_lp_error(m_surface, m_ref, Inf),
-
-        E_L1     = compute_lp_error(E_surface, E_ref, 1),
-        E_L2     = compute_lp_error(E_surface, E_ref, 2),
-        E_Linf   = compute_lp_error(E_surface, E_ref, Inf)
-    )
-end
-
-
-function stochastic_convergence_study(
+n, M, testcase, omega_fine, reconstruction_method (constant/cubic/polynomial); cfl_parameter -> StochasticSolution(omega_fine, reconstructed_solutions)
+"""
+function main( 
     n::Int,
+    M::Int,
     testcase::EulerTestCase,
-    M_values::Vector{Int};
-    nodes_type::String = "uniform",
-    reconstruction_method::String = "cubic",
-    omega_plot = collect(range(0.0, 1.0, length=200)))
-
-    # ------------------------------------------------------------
-    # Reference solution (largest M)
-    # ------------------------------------------------------------
-    M_ref = maximum(M_values)
-
-    _, solutions_ref =
-        stochastic_collocation_driver(
-            n,
-            testcase,
-            M_ref;
-            nodes_type = nodes_type
-        )
-
-    basis_ref = legendre_lobatto_basis(M_ref)
-
-    rho_ref, m_ref, E_ref =
-        reconstruct_surfaces(
-            omega_plot,
-            solutions_ref,
-            reconstruction_method
-        )
-
-    # ------------------------------------------------------------
-    # Error storage
-    # ------------------------------------------------------------
-    rho_L1   = Float64[]
-    rho_L2   = Float64[]
-    rho_Linf = Float64[]
-
-    m_L1     = Float64[]
-    m_L2     = Float64[]
-    m_Linf   = Float64[]
-
-    E_L1     = Float64[]
-    E_L2     = Float64[]
-    E_Linf   = Float64[]
-
-    # ------------------------------------------------------------
-    # Loop over M
-    # ------------------------------------------------------------
-    for M in M_values
-
-        println("Computing stochastic error for M = $M")
-
-        _, solutions =
-            stochastic_collocation_driver(
-                n,
-                testcase,
-                M;
-                nodes_type = nodes_type
-            )
-
-        current_basis =
-            reconstruction_method == "polynomial" ?
-            legendre_lobatto_basis(M) :
-            nothing
-
-        rho_surface, m_surface, E_surface =
-            reconstruct_surfaces(
-                omega_plot,
-                solutions,
-                reconstruction_method
-            )
-
-        errors = compute_surface_errors(
-            rho_surface,
-            m_surface,
-            E_surface,
-            rho_ref,
-            m_ref,
-            E_ref
-        )
-
-        push!(rho_L1,   errors.rho_L1)
-        push!(rho_L2,   errors.rho_L2)
-        push!(rho_Linf, errors.rho_Linf)
-
-        push!(m_L1,     errors.m_L1)
-        push!(m_L2,     errors.m_L2)
-        push!(m_Linf,   errors.m_Linf)
-
-        push!(E_L1,     errors.E_L1)
-        push!(E_L2,     errors.E_L2)
-        push!(E_Linf,   errors.E_Linf)
+    omega_fine::Vector{Float64},
+    reconstruction_method::String;
+    cfl_parameter::Float64 = 0.8)
+    
+    if reconstruction_method == "constant"
+        solution_at_nodes = stochastic_collocation_driver_common_dt(n, M, testcase; 
+                                                                    nodes_type = "uniform",
+                                                                    cfl_parameter = cfl_parameter)
+    elseif reconstruction_method == "cubic"
+        solution_at_nodes = stochastic_collocation_driver_common_dt(n, M, testcase; 
+                                                                    nodes_type = "uniform",
+                                                                    cfl_parameter = cfl_parameter)
+    elseif reconstruction_method == "polynomial"
+        solution_at_nodes = stochastic_collocation_driver_common_dt(n, M, testcase; 
+                                                                    nodes_type = "lobatto",
+                                                                    cfl_parameter = cfl_parameter)
+    else
+        error("Unknown reconstruction method: $reconstruction_method")
     end
 
-    return (
-        M_values = M_values,
-
-        rho_L1   = rho_L1,
-        rho_L2   = rho_L2,
-        rho_Linf = rho_Linf,
-
-        m_L1     = m_L1,
-        m_L2     = m_L2,
-        m_Linf   = m_Linf,
-
-        E_L1     = E_L1,
-        E_L2     = E_L2,
-        E_Linf   = E_Linf
-    )
+    solution = reconstruct_stochastic_solution(omega_fine,
+                                               solution_at_nodes,
+                                               reconstruction_method)
+    return solution
 end

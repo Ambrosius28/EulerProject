@@ -1,132 +1,79 @@
-using Plots
-using Printf
-using FilePathsBase
-
 function plot_heatmap_rho(
-testcase::EulerTestCase,
-M_vector::Vector{Int},
-ansatz_space::String,
-n::Int,
-nsnapshots::Int,
-omega_fine::Vector{Float64},
-figdir::String
-)
+    testcase::EulerTestCase,
+    M_vector::Vector{Int},
+    ansatz_space::String,
+    n::Int,
+    nsnapshots::Int,
+    omega_fine::Vector{Float64},
+    figdir::String)
 
+    gr()
+    mkpath(figdir)
 
-gr()
+    # Physical cell centers
+    dx = testcase.L / n
+    x = [(i - 0.5) * dx for i in 1:n]
 
-mkpath(figdir)
+    for M in M_vector
 
-# Physical cell centers only
-dx = testcase.L / n
-x = [(i - 1.5) * dx for i in 2:n+1]
+        println("Running M = $M")
 
-nodes_type =
-    ansatz_space == "polynomial" ? "lobatto" : "uniform"
+        # ------------------------------------------------
+        # Stochastic solve + reconstruction via main
+        # ------------------------------------------------
+        fine_stoch = main(n, M, testcase, omega_fine, ansatz_space)
 
-for M in M_vector
+        times = fine_stoch.solutions[1].times
+        nt    = length(times)
 
-    println("Running M = $M")
+        snap_idx = unique(round.(Int, range(1, nt, length = nsnapshots)))
 
-    # ----------------------------------------------------
-    # Stochastic solve
-    # ----------------------------------------------------
-    stochastic = stochastic_collocation_driver_common_dt(
-        n,
-        testcase,
-        M;
-        nodes_type = nodes_type
-    )
+        # ================================================
+        # Snapshot heatmaps
+        # ================================================
+        for j in snap_idx
 
-    # ----------------------------------------------------
-    # Reconstruction on fine omega grid
-    # ----------------------------------------------------
-    fine_stoch = reconstruct_stochastic_solution(
-        omega_fine,
-        stochastic,
-        ansatz_space
-    )
+            Z = zeros(length(omega_fine), n)
 
-    times = fine_stoch.solutions[1].times
-    nt = length(times)
+            for (k, solω) in enumerate(fine_stoch.solutions)
+                Z[k, :] .= solω.U[j][1, :]
+            end
 
-    snap_idx = unique(
-        round.(Int, range(1, nt, length = nsnapshots))
-    )
+            p = heatmap(
+                x, omega_fine, Z;
+                xlabel       = "x",
+                ylabel       = "ω",
+                title        = "ρ(x,ω), t=$(round(times[j], digits=4)), M=$M",
+                colorbar     = true,
+                aspect_ratio = :auto)
 
-    # ====================================================
-    # Snapshot heatmaps
-    # ====================================================
-    for j in snap_idx
-
-        Z = zeros(length(omega_fine), n)
-
-        for (k, solω) in enumerate(fine_stoch.solutions)
-
-            U = solω.U[j]
-
-            # Density component, physical cells only
-            Z[k, :] .= U[1, 2:n+1]
-
+            savefig(p, joinpath(figdir, @sprintf("rho_M%d_snap%03d.png", M, j)))
         end
 
-        p = heatmap(
-            x,
-            omega_fine,
-            Z;
-            xlabel = "x",
-            ylabel = "ω",
-            title = "ρ(x,ω), t=$(round(times[j], digits=4)), M=$M",
-            colorbar = true,
-            aspect_ratio = :auto
-        )
+        # ================================================
+        # Animated GIF
+        # ================================================
+        anim = @animate for j in 1:nt
 
-        filename = joinpath(
-            figdir,
-            @sprintf("rho_M%d_snap%03d.png", M, j)
-        )
+            Z = zeros(length(omega_fine), n)
 
-        savefig(p, filename)
-    end
+            for (k, solω) in enumerate(fine_stoch.solutions)
+                Z[k, :] .= solω.U[j][1, :]
+            end
 
-    # ====================================================
-    # Animated GIF
-    # ====================================================
-    anim = @animate for j in 1:nt
-
-        Z = zeros(length(omega_fine), n)
-
-        for (k, solω) in enumerate(fine_stoch.solutions)
-
-            U = solω.U[j]
-
-            # Density component, physical cells only
-            Z[k, :] .= U[1, 2:n+1]
-
+            heatmap(
+                x, omega_fine, Z;
+                xlabel       = "x",
+                ylabel       = "ω",
+                title        = "ρ(x,ω), t=$(round(times[j], digits=4)), M=$M",
+                colorbar     = true,
+                aspect_ratio = :auto)
         end
 
-        heatmap(
-            x,
-            omega_fine,
-            Z;
-            xlabel = "x",
-            ylabel = "ω",
-            title = "ρ(x,ω), t=$(round(times[j], digits=4)), M=$M",
-            colorbar = true,
-            aspect_ratio = :auto
-        )
+        gif(anim, joinpath(figdir, @sprintf("rho_M%d_%s.gif", M, ansatz_space)), fps = 6)
+
+        println("Saved outputs for M = $M in $figdir")
     end
 
-    gif_name = joinpath(
-        figdir,
-        @sprintf("rho_M%d_%s.gif", M, ansatz_space)
-    )
-
-    gif(anim, gif_name, fps = 6)
-
-    println("Saved outputs for M = $M in $figdir")
-end
-
-return nothing
-
+    return nothing
 end

@@ -1,9 +1,9 @@
 # ==============================================================================
-# Exercise 2.2 (i)
+# Exercise 2.2 (ii)
 # ==============================================================================
 
-include("/Users/marcoambrogiobergamo/Desktop/MAINZ/Courses/Modelling/PROJECT/EulerProject/FV_stochastic.jl")
-include("/Users/marcoambrogiobergamo/Desktop/MAINZ/Courses/Modelling/PROJECT/EulerProject/plots.jl")
+include("../FV_stochastic.jl")
+include("../plots.jl")
 
 # ==============================================================================
 # PARAMETERS
