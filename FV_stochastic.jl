@@ -563,7 +563,7 @@ end
 # SECTION 7 — Stochastic collocation
 # ==============================================================================
 "omega_eval, stochastic, reconstruction_method -> DeterministicSolution at omega_eval using the specified reconstruction method"
-function evaluate_at_omega_(
+function evaluate_at_omega(
     omega_eval::Float64,
     stochastic::StochasticSolution,
     reconstruction_method::String)
@@ -574,7 +574,7 @@ function evaluate_at_omega_(
     number_timesteps = length(solutions[1].U) #TODO: here we are not considering the adaptive time stepping, for which we have different times for each omega. 
 
     U_interp = Matrix{Float64}[]
-    ncomp, ncells = size(U_samples[1]) 
+    ncomp, ncells = size(solutions[1].U[1]) 
     Uj = zeros(ncomp, ncells)
 
     for j in 1:number_timesteps                     #loop over time steps
@@ -589,7 +589,7 @@ function evaluate_at_omega_(
             end
         end
 
-        push!(U_interp, Uj)
+        push!(U_interp, copy(Uj))
     end
 
     return DeterministicSolution(solutions[1].times, U_interp)
