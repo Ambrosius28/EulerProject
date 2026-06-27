@@ -462,26 +462,71 @@ function complete_simulation(type)
     # EOC:
     #
     
+    gb = GaussLegendre(polydeg)
+    Gauss_nodes = gb.nodes # polydeg + 1 Vektor
+    Gauss_weights = gb.weights # polydeg + 1 Vektor
+
     errors = Float64[]
+
     for i in 1:length(ns)-1
-        q_coarse = results[i] # vector of length (polydeg+1) * ns[i]
-        q_fine = results[i+1] # vector of length (polydeg+1) * ns[i+1]
-        
-        # the average of the nodes is computed for each element
-        m_coarse = [mean(q_coarse[(e-1)*nodes + 1 : e*nodes]) for e in 1:ns[i]]
-        # here the average of the nodes on the finer grid is computed for each element
-        m_fine_raw = [mean(q_fine[(e-1)*nodes + 1 : e*nodes]) for e in 1:ns[i+1]]
-        # average of two neighboring elements on the finer grid
-        m_fine_avg = [(m_fine_raw[j*2-1] + m_fine_raw[j*2]) / 2 for j in 1:length(m_coarse)]
-        
-        # L1 norm: mean absolute error: sum(abs(error)) * dx 
-        err = sum(abs.(m_coarse .- m_fine_avg)) / length(m_coarse) # can be divided by ns[i], since L = 1.0 in both cases
-        # L2 norm: sqrt(sum(abs(error)^2) * dx)
-        #err = sqrt(sum(abs.(m_coarse .- m_fine_avg).^2) / length(m_coarse)) # length(m_coarse) the same as ns[i]
-        # Linf norm: max(abs(error))
-        #err = maximum(abs.(m_coarse .- m_fine_avg))
-        println("Error between n=$(ns[i]) and n=$(ns[i+1]): ", err)
-        push!(errors, err)
+        err = 0.0
+        for e in 1:ns[i+1] # go through all cells of the finer grid
+
+            h = 1.0 / ns[i+1] # Cell width on the true interval
+
+            q_fine = results[i+1][(e-1)*nodes + 1 : e*nodes] # Data of the current fine cell
+            #q_coarse = results[i][(e-1)*nodes + 1 : e*nodes] # Data of the current coarse cell
+
+            nodes_fine = X_array[i+1][(e-1)*nodes + 1 : e*nodes] # nodes of the current fine cell
+
+            q_fine_gauss = interpolate(Gauss_nodes, q_fine, LobattoLegendre(polydeg)) # vector with polydeg + 1 elements
+
+            # which coarse cell has the fine cell?
+            center_fine = sum(nodes_fine) / length(nodes_fine) # middle point of the current fine cell
+            # go through all coarse cells (for e in 1:ns[i]). argmin returns the index of the coarse cell, where the middle
+            # point is the closest to the middle point of the fine cell
+            #ratio = ns[i+1] / ns[i]
+            #e_coarse = ceil(Int, e / ratio)
+            e_coarse = argmin([abs(sum(X_array[i][(e-1)*nodes + 1 : e*nodes])/nodes - center_fine) for e in 1:ns[i]])
+
+            #!
+            # is center fine in the boundaries of the croase cell
+            x_min_coarse = minimum(X_array[i][(e_coarse-1)*nodes + 1 : e_coarse*nodes])
+            x_max_coarse = maximum(X_array[i][(e_coarse-1)*nodes + 1 : e_coarse*nodes])
+
+            if !(x_min_coarse <= center_fine <= x_max_coarse)
+                println("ALARM: Zuteilung fehlerhaft!")
+                println("Feine Zelle $e hat Zentrum $center_fine, aber grobe Zelle $e_coarse geht von $x_min_coarse bis $x_max_coarse")
+            end
+            #!
+
+            #e_coarse = argmin([abs(sum(X_array[i][(e-1)*nodes + 1 : e*nodes])/nodes - center_fine) for e in 1:ns[i]])
+            q_coarse_cell = results[i][(e_coarse-1)*nodes + 1 : e_coarse*nodes]
+
+            # Where is the fine cell located in relation to the center of the coarse cell?
+            # center_fine is the middle point of the fine cell
+            # center_coarse is the middle point of the corresponding coarse cell
+            center_coarse = sum(X_array[i][(e_coarse-1)*nodes + 1 : e_coarse*nodes]) / nodes
+
+            if center_fine < center_coarse
+                # fine cell is located on the left side
+                gauss_nodes_for_coarse = (Gauss_nodes .- 1) ./ 2 # vector with polydeg + 1 elements
+            else
+                # fine cell is located on the right side
+                gauss_nodes_for_coarse = (Gauss_nodes .+ 1) ./ 2 # vector with polydeg + 1 elements
+            end
+
+            #if i == 6
+                #println("e_coarse is: ", e_coarse)
+                #println("")
+
+            # interpolation: 
+            q_coarse_gauss = interpolate(gauss_nodes_for_coarse, q_coarse_cell, LobattoLegendre(polydeg))
+
+            err += 0.5*h*sum( Gauss_weights .* (q_coarse_gauss .- q_fine_gauss) .^2 ) # squared L2-norm
+        end
+        println("Fehler zwischen n=$(ns[i]) und n=$(ns[i+1]): ", sqrt(err))
+        push!(errors, sqrt(err))
     end
 
     # EOC calculation now remains the same as for the LLF flux
@@ -500,8 +545,7 @@ function complete_simulation(type)
                   title="Mesh Convergence Study",
                   xlabel="n (number of intervals)", ylabel="||u_h - u_h/2||")
     display(p_conv)
-    savefig("plots_dgsem/$(type)_dgsem_konvergenz_studie_$(current_var_name)_.png")
-    
+    savefig("plots_dgsem/$(type)_dgsem_konvergenz_studie_$(current_var_name)_.png")    
 end
 
 function main()
