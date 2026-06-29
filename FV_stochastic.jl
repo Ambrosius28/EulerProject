@@ -271,7 +271,7 @@ end
 (FIRST STAGE): Solves the deterministic FV+Explicit Euler problem for a given omega 
 and returns the DeterministicSolution(omega, times, U_history).
 
-n, testcase, omega; cfl_parameter=0.8 -> DeterministicSolution(omega, times, U_history)
+n, testcase, omega; cfl_parameter=0.8 -> DeterministicSolution(times, U_history)
 """
 function solver_FV(
     n::Int,

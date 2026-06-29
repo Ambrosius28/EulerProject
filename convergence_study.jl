@@ -47,35 +47,7 @@ using Printf, Statistics, Plots
 using FastGaussQuadrature   # trustworthy, lightweight package for Gauss nodes/weights
                             # (Pkg.add("FastGaussQuadrature") if not yet installed)
 
-# ------------------------------------------------------------------------------
-# NOTE on omega-quadrature (addressing remarks from the tutor's emails on the
-# DGSEM EOC computation, points 2 and 4):
-#
-#   - Point 2 ("use the actual quadrature weights, not a naive mean") and
-#   - Point 4 ("you can compute the norm essentially exactly, why don't you?")
-#
-# apply here too: for the POLYNOMIAL ansatz, U_M(omega) genuinely is a
-# polynomial of degree M-1 in omega. Integrating the error in omega with a
-# naive trapezoidal rule on a fixed uniform fine grid only has algebraic
-# accuracy, and could become the dominant (and misleading) source of error
-# once the polynomial ansatz starts converging spectrally -- it would look
-# like convergence stalls, when really the omega-quadrature itself stalls.
-#
-# We therefore evaluate (and integrate) on Gauss-Legendre nodes/weights in
-# omega instead of a uniform grid + trapezoidal rule. A Gauss-Legendre rule
-# with n_gauss points integrates polynomials up to degree 2*n_gauss - 1
-# EXACTLY, so with n_gauss reasonably larger than the largest M tested, the
-# omega-integration error is negligible compared to the collocation error
-# we actually want to measure -- for all three ansatz spaces (constant,
-# cubic, polynomial), not just the polynomial one.
-# ------------------------------------------------------------------------------
-
-# ------------------------------------------------------------------------------
-# Missing test case: Exercise 2.3 (ii)
-# Neumann BC, random gamma(omega) = 1.1 + 0.5*omega, deterministic IC as in 1.4(ii)
-# (analogous to exercise_2_3_i, but with the Neumann/shock-tube initial data)
-# ------------------------------------------------------------------------------
-exercise_2_3_ii = EulerTestCase(
+"""exercise_2_3_ii = EulerTestCase(
     T = 0.2,
     L = 1.0,
     gamma = omega -> 1.1 + 0.5 * omega,
@@ -87,7 +59,7 @@ exercise_2_3_ii = EulerTestCase(
             return (0.125, 0.0, 0.1)
         end
     end
-)
+)"""
 
 # ------------------------------------------------------------------------------
 # Gauss-Legendre nodes/weights on (0,1) (mapped from the standard [-1,1]
@@ -102,51 +74,21 @@ function gauss_legendre_omega(n_points::Int)
 end
 
 # ------------------------------------------------------------------------------
-# Reference solution: solve the deterministic FV problem directly at each
-# omega of the fine grid (no reconstruction -> ground truth).
-# Returns U_ref[component, x, omega] at the FINAL time T.
+# Reference solution: M=64, method=cubic, t=T
 # ------------------------------------------------------------------------------
-function reference_solution(
-    testcase::EulerTestCase,
-    n::Int,
-    omega_fine::Vector{Float64};
-    cfl_parameter::Float64 = 0.8)
-
-    nomega = length(omega_fine)
-    U_ref = zeros(3, n, nomega)
-
-    for (k, omega) in enumerate(omega_fine)
-        sol = solver_FV(n, testcase, omega; cfl_parameter = cfl_parameter)
-        U_ref[:, :, k] = sol.U[end][:, 2:end-1]   # final time, strip ghost cells
-    end
-
-    return U_ref
+function reference_solution(testcase, n, omega_fine; cfl_parameter=0.8, M_ref=64, ref_method="cubic")
+    sol_fine = main(n, M_ref, testcase, omega_fine, ref_method; cfl_parameter=cfl_parameter)
+    U = tensorize(sol_fine)
+    return U[:, end, :, :]
 end
 
 # ------------------------------------------------------------------------------
-# Stochastic-collocation solution for a given M and ansatz method, evaluated
-# on the SAME fine omega grid as the reference, at the FINAL time T.
-# Returns U_M[component, x, omega].
+# Stochastic-collocation solution: t=T
 # ------------------------------------------------------------------------------
-function collocation_solution(
-    testcase::EulerTestCase,
-    n::Int,
-    M::Int,
-    method::String,
-    omega_fine::Vector{Float64};
-    cfl_parameter::Float64 = 0.8)
-
-    nodes_type = method == "polynomial" ? "lobatto" : "uniform"
-
-    sol_nodes = stochastic_collocation_driver_common_dt(
-        n, M, testcase;
-        nodes_type    = nodes_type,
-        cfl_parameter = cfl_parameter)
-
-    sol_fine = reconstruct_stochastic_solution(omega_fine, sol_nodes, method)
-
-    U = tensorize(sol_fine)   # (component, t, x, omega)
-    return U[:, end, :, :]    # final time slice -> (component, x, omega)
+function collocation_solution(testcase, n, M, method, omega_fine; cfl_parameter=0.8)
+    sol_fine = main(n, M, testcase, omega_fine, method; cfl_parameter = cfl_parameter)
+    U = tensorize(sol_fine)
+    return U[:, end, :, :]
 end
 
 # ------------------------------------------------------------------------------
@@ -209,8 +151,8 @@ function convergence_study(
     EOC_L1 = [NaN]
     EOC_L2 = [NaN]
     for i in 1:length(M_values)-1
-        push!(EOC_L1, log(errors_L1[i] / errors_L1[i+1]) / log(M_values[i+1] / M_values[i]))
-        push!(EOC_L2, log(errors_L2[i] / errors_L2[i+1]) / log(M_values[i+1] / M_values[i]))
+        push!(EOC_L1, log2(errors_L1[i] / errors_L1[i+1]))
+        push!(EOC_L2, log2(errors_L2[i] / errors_L2[i+1]))
     end
 
     return (M = M_values, errors_L1 = errors_L1, errors_L2 = errors_L2,
@@ -260,8 +202,8 @@ function cauchy_convergence_study(
     EOC_L1 = [NaN]
     EOC_L2 = [NaN]
     for i in 1:length(errors_L1)-1
-        push!(EOC_L1, log(errors_L1[i] / errors_L1[i+1]) / log(M_values[i+2] / M_values[i+1]))
-        push!(EOC_L2, log(errors_L2[i] / errors_L2[i+1]) / log(M_values[i+2] / M_values[i+1]))
+        push!(EOC_L1, log2(errors_L1[i] / errors_L1[i+1]))
+        push!(EOC_L2, log2(errors_L2[i] / errors_L2[i+1]))
     end
 
     # M reported here is the coarser of each compared pair (M_i vs M_{i+1}),
@@ -310,7 +252,7 @@ sanitize_filename(s::String) = replace(s, r"[^A-Za-z0-9]+" => "_")
 
 # ------------------------------------------------------------------------------
 # Run the full convergence study (all 3 ansatz spaces) for ONE test case,
-# print tables, and produce L1/L2 log-log comparison plots.
+# print tables, and produce L1/L2 log-lin comparison plots.
 # ------------------------------------------------------------------------------
 function run_full_convergence_study(
     name::String,
@@ -380,8 +322,12 @@ function run_full_convergence_study(
     subtitle = "n=$n cells, $(length(M_values)) collocation levels, component = $comp_name"
 
     # -------------------- L1 convergence plot --------------------
+    M_plotted = results["constant"].M
+    xticks_setting = (M_plotted, string.(M_plotted))
+
     p1 = plot(xscale = :log10, yscale = :log10,
               xlabel = "M (number of collocation points)",
+              xticks = xticks_setting,
               ylabel = "L¹ error  ‖U_M − U_ref‖_{L¹(Ω)}",
               title = "$title_base\nL¹ convergence — $mode_label",
               titlefontsize = 10, subplot = 1,
@@ -398,6 +344,7 @@ function run_full_convergence_study(
     # -------------------- L2 convergence plot --------------------
     p2 = plot(xscale = :log10, yscale = :log10,
               xlabel = "M (number of collocation points)",
+              xticks = xticks_setting,
               ylabel = "L² error  ‖U_M − U_ref‖_{L²(Ω)}",
               title = "$title_base\nL² convergence — $mode_label",
               titlefontsize = 10,
@@ -432,12 +379,12 @@ end
 #                 study in Part 1 was done.
 
 cases = [
-    ("ex_2_2_i",   exercise_2_2_i,   20, [4, 8, 16], 30),
-    ("ex_2_2_ii",  exercise_2_2_ii,  20, [4, 8, 16], 30),
-    ("ex_2_3_i",   exercise_2_3_i,   20, [4, 8, 16], 30),
-    ("ex_2_3_ii",  exercise_2_3_ii,  20, [4, 8, 16], 30),
-    ("ex_2_4_i",   exercise_2_4_i,   20, [4, 8, 16], 30),
-    ("ex_2_4_ii",  exercise_2_4_ii,  20, [4, 8, 16], 30),
+    ("ex_2_2_i",   exercise_2_2_i,   20, [4, 8, 16,32], 30),
+    ("ex_2_2_ii",  exercise_2_2_ii,  20, [4, 8, 16,32], 30),
+    ("ex_2_3_i",   exercise_2_3_i,   20, [4, 8, 16,32], 30),
+    ("ex_2_3_ii",  exercise_2_3_ii,  20, [4, 8, 16,32], 30),
+    ("ex_2_4_i",   exercise_2_4_i,   20, [4, 8, 16,32], 30),
+    ("ex_2_4_ii",  exercise_2_4_ii,  20, [4, 8, 16,32], 30),
 ]
 
 all_results = Dict{String, Any}()
