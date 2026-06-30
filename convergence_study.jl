@@ -1,38 +1,6 @@
 # ==============================================================================
 # Convergence study (in omega) for the stochastic collocation Euler solver
 # ==============================================================================
-#
-# For each test case (exercises 2.2(i,ii), 2.3(i,ii), 2.4(i,ii)) and for each
-# ansatz space (piecewise constant, cubic spline, global polynomial), this
-# script:
-#
-#   1. builds a reference solution U_ref(omega) on a fine omega grid by
-#      solving the deterministic FV problem DIRECTLY at each fine omega
-#      (no reconstruction involved -> ground truth, same spatial mesh n),
-#   2. builds the stochastic-collocation approximation U_M(omega) for an
-#      increasing sequence of collocation points M, reconstructed on the
-#      SAME fine omega grid,
-#   3. computes the L^1 and L^2 error (jointly over x and omega, at the
-#      final time T) between U_M and U_ref,
-#   4. estimates the EOC (Empirical Order of Convergence) between successive M,
-#   5. prints an error/order table and produces a log-log convergence plot
-#      comparing the three ansatz spaces.
-#
-# Place this file in the same directory as the other ex_stoch_*.jl scripts,
-# so that `include("../FV_stochastic.jl")` resolves correctly.
-#
-# Two convergence modes are available (set via `convergence_mode` in
-# run_full_convergence_study):
-#   :reference -- compares U_M against an independently computed reference
-#                 solution (deterministic FV solved directly at n_gauss
-#                 Gauss-Legendre omega points). Gives an absolute error.
-#   :cauchy    -- compares consecutive collocation solutions U_{M_i} and
-#                 U_{M_{i+1}} to each other (no independent reference
-#                 needed), mirroring how the deterministic mesh-refinement
-#                 convergence study (Part 1) was done. Cheaper, and only
-#                 shows that the sequence is Cauchy (hence convergent),
-#                 not the absolute error to a known solution.
-#
 # IMPORTANT — kept fixed across an M-sweep for a given test case:
 #   - spatial resolution n
 #   - cfl_parameter
@@ -41,51 +9,38 @@
 # spatial discretization error.
 # ==============================================================================
 
-include("../FV_stochastic.jl")
+include("./FV_stochastic.jl")
 
 using Printf, Statistics, Plots
-using FastGaussQuadrature   # trustworthy, lightweight package for Gauss nodes/weights
-                            # (Pkg.add("FastGaussQuadrature") if not yet installed)
-
-"""exercise_2_3_ii = EulerTestCase(
-    T = 0.2,
-    L = 1.0,
-    gamma = omega -> 1.1 + 0.5 * omega,
-    bc = "neumann",
-    ic = function (x, omega, L)
-        if x < L / 2
-            return (1.0, 0.0, 1.0)
-        else
-            return (0.125, 0.0, 0.1)
-        end
-    end
-)"""
+using FastGaussQuadrature   # trustworthy, lightweight package for Gauss nodes/weights. (Pkg.add("FastGaussQuadrature") if not yet installed)
 
 # ------------------------------------------------------------------------------
 # Gauss-Legendre nodes/weights on (0,1) (mapped from the standard [-1,1]
 # rule). Used to integrate the error in omega essentially exactly (see note
 # above), instead of a naive trapezoidal rule on a fixed fine grid.
 # ------------------------------------------------------------------------------
-function gauss_legendre_omega(n_points::Int)
-    nodes_ref, weights_ref = gausslegendre(n_points)   # on [-1, 1]
-    omega_nodes   = collect(0.5 .* (nodes_ref .+ 1.0))
-    omega_weights = collect(0.5 .* weights_ref)
+
+"number of omegas --> omega_nodes, omega_weights (of the Gass-Legendre quadrature for ω ∈ (0,1))"
+function gauss_legendre_omega(n_omegas::Int)
+    nodes_ref, weights_ref = gausslegendre(n_omegas)   # on [-1, 1]
+    omega_nodes   = 0.5 .* (nodes_ref .+ 1.0)          # on [0,1]
+    omega_weights = 0.5 .* weights_ref                 # on [0,1] (for weight just the scaling counts)
     return omega_nodes, omega_weights
 end
 
 # ------------------------------------------------------------------------------
 # Reference solution: M=64, method=cubic, t=T
 # ------------------------------------------------------------------------------
-function reference_solution(testcase, n, omega_fine; cfl_parameter=0.8, M_ref=64, ref_method="cubic")
-    sol_fine = main(n, M_ref, testcase, omega_fine, ref_method; cfl_parameter=cfl_parameter)
-    U = tensorize(sol_fine)
+function reference_solution(n, testcase, omega_fine; cfl_parameter=0.8, M_ref=64, ref_method="polynomial")
+    sol_ref = main(n, M_ref, testcase, omega_fine, ref_method; cfl_parameter=cfl_parameter)
+    U = tensorize(sol_ref)
     return U[:, end, :, :]
 end
 
 # ------------------------------------------------------------------------------
 # Stochastic-collocation solution: t=T
 # ------------------------------------------------------------------------------
-function collocation_solution(testcase, n, M, method, omega_fine; cfl_parameter=0.8)
+function collocation_solution(n, M, testcase, omega_fine, method; cfl_parameter=0.8)
     sol_fine = main(n, M, testcase, omega_fine, method; cfl_parameter = cfl_parameter)
     U = tensorize(sol_fine)
     return U[:, end, :, :]
@@ -142,7 +97,7 @@ function convergence_study(
 
     for M in M_values
         println("  -> method = $method, M = $M")
-        U_M = collocation_solution(testcase, n, M, method, omega_eval; cfl_parameter = cfl_parameter)
+        U_M = collocation_solution(n, M, testcase, omega_eval,  method; cfl_parameter = cfl_parameter)
 
         push!(errors_L1, Lp_error(U_M, U_ref, component, 1, dx, omega_weights))
         push!(errors_L2, Lp_error(U_M, U_ref, component, 2, dx, omega_weights))
@@ -187,7 +142,7 @@ function cauchy_convergence_study(
     dx = testcase.L / n
 
     println("  -> (Cauchy) computing collocation solutions for M = $M_values, method = $method ...")
-    U_list = [collocation_solution(testcase, n, M, method, omega_eval; cfl_parameter = cfl_parameter)
+    U_list = [collocation_solution(n, M, testcase, omega_eval,  method; cfl_parameter = cfl_parameter)
               for M in M_values]
 
     errors_L1 = Float64[]
@@ -288,7 +243,7 @@ function run_full_convergence_study(
     # the same n_gauss deterministic problems 3 times over.
     U_ref = if convergence_mode == :reference
         println("  -> building reference solution (n=$n, $(length(omega_eval)) Gauss-Legendre omega points)...")
-        reference_solution(testcase, n, omega_eval; cfl_parameter = cfl_parameter)
+        reference_solution(n, testcase, omega_eval; cfl_parameter = cfl_parameter)
     else
         nothing
     end
@@ -325,10 +280,10 @@ function run_full_convergence_study(
     M_plotted = results["constant"].M
     xticks_setting = (M_plotted, string.(M_plotted))
 
-    p1 = plot(xscale = :log10, yscale = :log10,
+    p1 = plot(xscale = :identity, yscale = :log10,
               xlabel = "M (number of collocation points)",
               xticks = xticks_setting,
-              ylabel = "L¹ error  ‖U_M − U_ref‖_{L¹(Ω)}",
+              ylabel = "L¹ error  ‖U_M − U_ref‖_{L¹(Ω×[0,L])}",
               title = "$title_base\nL¹ convergence — $mode_label",
               titlefontsize = 10, subplot = 1,
               legend = :bottomleft, legendfontsize = 8,
@@ -342,10 +297,10 @@ function run_full_convergence_study(
     savefig(p1, joinpath(figdir, "$(sanitize_filename(name))_$(convergence_mode)_L1_convergence.png"))
 
     # -------------------- L2 convergence plot --------------------
-    p2 = plot(xscale = :log10, yscale = :log10,
+    p2 = plot(xscale = :identity, yscale = :log10,
               xlabel = "M (number of collocation points)",
               xticks = xticks_setting,
-              ylabel = "L² error  ‖U_M − U_ref‖_{L²(Ω)}",
+              ylabel = "L² error  ‖U_M − U_ref‖_{L²(Ω×[0,L])}",
               title = "$title_base\nL² convergence — $mode_label",
               titlefontsize = 10,
               legend = :bottomleft, legendfontsize = 8,
@@ -379,12 +334,12 @@ end
 #                 study in Part 1 was done.
 
 cases = [
-    ("ex_2_2_i",   exercise_2_2_i,   20, [4, 8, 16,32], 30),
-    ("ex_2_2_ii",  exercise_2_2_ii,  20, [4, 8, 16,32], 30),
-    ("ex_2_3_i",   exercise_2_3_i,   20, [4, 8, 16,32], 30),
-    ("ex_2_3_ii",  exercise_2_3_ii,  20, [4, 8, 16,32], 30),
-    ("ex_2_4_i",   exercise_2_4_i,   20, [4, 8, 16,32], 30),
-    ("ex_2_4_ii",  exercise_2_4_ii,  20, [4, 8, 16,32], 30),
+    #("ex_2_2_i",   exercise_2_2_i,   50, [4, 8, 12, 16, 24, 32], 40), #n, M, number of omega_fine
+    ("ex_2_2_ii",  exercise_2_2_ii,  50, [4, 8, 12, 16, 24, 32], 40),
+    ("ex_2_3_i",   exercise_2_3_i,   50, [4, 8, 12, 16, 24, 32], 40),
+    ("ex_2_3_ii",  exercise_2_3_ii,  50, [4, 8, 12, 16, 24, 32], 40),
+    ("ex_2_4_i",   exercise_2_4_i,   50, [4, 8, 12, 16, 24, 32], 40),
+    ("ex_2_4_ii",  exercise_2_4_ii,  50, [4, 8, 12, 16, 24, 32], 40),
 ]
 
 all_results = Dict{String, Any}()

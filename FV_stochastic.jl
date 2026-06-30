@@ -7,6 +7,7 @@ using Polynomials
 using Plots
 using Trixi
 using Dierckx # For cubic spline interpolation
+using Base.Threads # for multi-thread computing in the solver
 
 # ==============================================================================
 # SECTION 1 — Euler flux and wave speed
@@ -17,6 +18,18 @@ function physical_flux(U::AbstractVector, gamma::Float64)
     u = m / rho
     p = (gamma - 1.0) * (E - 0.5 * rho * u^2)
     return [rho * u, m * u + p, (E + p) * u] # F(U) = [ρu, mu + p, (E+p)u]
+end
+
+function physical_flux!(F::AbstractVector, U::AbstractVector, gamma::Float64)
+    rho, m, E = U[1], U[2], U[3]
+    u = m / rho
+    p = (gamma - 1.0) * (E - 0.5 * rho * u^2)
+
+    F[1] = rho*u
+    F[2] = m*u + p
+    F[3] = (E+p)*u
+
+    return nothing
 end
 
 function primitive_to_conservative(rho::Float64, u::Float64, p::Float64, gamma::Float64)
@@ -219,7 +232,27 @@ function numerical_flux_llf(U_left::AbstractVector, U_right::AbstractVector, gam
     F_left  = physical_flux(U_left,  gamma)
     F_right = physical_flux(U_right, gamma)
     s = max_wave_speed(U_left, U_right, gamma)
-    return 0.5 .* (F_left .+ F_right) .- 0.5 .* s .* (U_right .- U_left) #
+    return 0.5 .* (F_left .+ F_right) .- 0.5 .* s .* (U_right .- U_left) 
+end
+
+function numerical_flux_llf!(
+    Fnum,
+    F_left,
+    F_right,
+    U_left,
+    U_right,
+    gamma)
+
+    physical_flux!(F_left, U_left, gamma)
+    physical_flux!(F_right, U_right, gamma)
+
+    s = max_wave_speed(U_left, U_right, gamma)
+
+    Fnum[1] = 0.5*(F_left[1] + F_right[1]) - 0.5*s*(U_right[1] - U_left[1])
+    Fnum[2] = 0.5*(F_left[2] + F_right[2]) - 0.5*s*(U_right[2] - U_left[2])
+    Fnum[3] = 0.5*(F_left[3] + F_right[3]) - 0.5*s*(U_right[3] - U_left[3])
+
+    return nothing
 end
 
 """
@@ -246,10 +279,55 @@ function FV_rhs(U::Matrix, dx::Float64, n::Int, gamma::Float64)
     return rhs
 end
 
+function FV_rhs!(
+    rhs,
+    interface_fluxes,
+    flux,
+    flux_left,
+    flux_right,
+    U,
+    dx,
+    n,
+    gamma)
+
+    @inbounds for i in 1:n+1
+        numerical_flux_llf!(
+            flux,
+            flux_left,
+            flux_right,
+            U[:,i],
+            U[:,i+1],
+            gamma)
+
+        interface_fluxes[:,i] .= flux
+
+    end
+
+    fill!(rhs,0.0)
+
+    @inbounds for i in 2:n+1
+        rhs[1,i] = -(interface_fluxes[1,i] - interface_fluxes[1,i-1]) / dx
+        rhs[2,i] = -(interface_fluxes[2,i] - interface_fluxes[2,i-1]) / dx
+        rhs[3,i] = -(interface_fluxes[3,i] - interface_fluxes[3,i-1]) / dx
+    end
+
+    return nothing
+end
+
 "U_old, rhs, dt -> U_new after one explicit Euler time step"
 function explicit_euler_time_step(U_old::Matrix, rhs::Matrix, dt::Float64)
     U_new = U_old .+ dt .* rhs
     return U_new
+end
+
+function explicit_euler_time_step!(U, rhs, dt)
+    @inbounds for j in 2:size(U,2)-1
+        U[1,j] += dt*rhs[1,j]
+        U[2,j] += dt*rhs[2,j]
+        U[3,j] += dt*rhs[3,j]
+    end
+
+    return nothing
 end
 
 "U (for computing max wave speed), cfl_parameter, dx, gamma (for computing max wave speed) -> dt"
@@ -273,52 +351,108 @@ and returns the DeterministicSolution(omega, times, U_history).
 
 n, testcase, omega; cfl_parameter=0.8 -> DeterministicSolution(times, U_history)
 """
-function solver_FV(
+function solver_FV_old(
     n::Int,
     testcase::EulerTestCase,
     omega::Float64;
-    cfl_parameter::Float64 = 0.8)
+    cfl_parameter::Float64 = 0.8,
+    nsnapshots::Int = 100)
 
     # --- parameters ---
     dx = testcase.L / n
     gamma = testcase.gamma(omega)
-    t_end = testcase.T
 
     # --- initial condition ---
     U = setup_initial_condition(n, testcase; omega = omega)
     t = 0.0
 
     # --- storage ---
-    times = Float64[]
-    U_history = Matrix{Float64}[]
+    times = [0.0]
+    U_history = [copy(U[:,2:end-1])]
+    snapshot_times = range(0.0, testcase.T, length=nsnapshots)
 
-    
-    push!(times, t)
-    push!(U_history, copy(U))
-  
+    for t_snap in snapshot_times[2:end]
+        while t < t_snap
 
-    # --- time loop ---
-    while t < t_end
+            apply_boundary_conditions!(U, testcase, t, omega)
 
-        apply_boundary_conditions!(U, testcase, t, omega)
+            dt = cfl_timestep(U, n, cfl_parameter, dx, gamma)
 
-        dt = cfl_timestep(U, n, cfl_parameter, dx, gamma)
+            if t + dt > t_snap
+                dt = t_snap - t
+            end
 
-        if t + dt > t_end
-            dt = t_end - t
+            rhs = FV_rhs(U, dx, n, gamma)
+            U = explicit_euler_time_step(U, rhs, dt)
+
+            t += dt
+
         end
 
-        rhs = FV_rhs(U, dx, n, gamma)
+        push!(times, t_snap)
+        push!(U_history, copy(U[:,2:end-1]))
 
-        U = explicit_euler_time_step(U, rhs, dt)
-        t += dt
-
-        push!(times, t)
-        push!(U_history, copy(U)) #TODO: maybe push!(U_history, copy(U[:, 2:n+1])) to save memory since ghost cells are not needed for reconstruction?
     end
 
-    apply_boundary_conditions!(U, testcase, t, omega) #TODO: maybe not needed since we won't use ghost cells for reconstruction?
-    U_history[end] = copy(U)
+    return DeterministicSolution(times, U_history)
+end
+
+function solver_FV(
+    n::Int,
+    testcase::EulerTestCase,
+    omega::Float64;
+    cfl_parameter::Float64 = 0.8,
+    nsnapshots::Int = 100)
+
+    # --- parameters ---
+    dx = testcase.L / n
+    gamma = testcase.gamma(omega)
+
+    # --- initial condition ---
+    U = setup_initial_condition(n, testcase; omega = omega)
+    t = 0.0
+
+    # --- storage ---
+    times = [0.0]
+    U_history = [copy(U[:,2:end-1])]
+    snapshot_times = range(0.0, testcase.T, length=nsnapshots)
+    
+    rhs = similar(U)
+    interface_fluxes = Matrix{Float64}(undef,3,n+1)
+    flux       = Vector{Float64}(undef,3)
+    flux_left  = Vector{Float64}(undef,3)
+    flux_right = Vector{Float64}(undef,3)
+
+    for t_snap in snapshot_times[2:end]
+        while t < t_snap
+
+            apply_boundary_conditions!(U, testcase, t, omega)
+
+            dt = cfl_timestep(U, n, cfl_parameter, dx, gamma)
+
+            if t + dt > t_snap
+                dt = t_snap - t
+            end
+
+            FV_rhs!(rhs,
+                    interface_fluxes,
+                    flux,
+                    flux_left,
+                    flux_right,
+                    U,
+                    dx,
+                    n,
+                    gamma)
+            explicit_euler_time_step!(U, rhs, dt)
+
+            t += dt
+
+        end
+
+        push!(times, t_snap)
+        push!(U_history, copy(U[:,2:end-1]))
+
+    end
 
     return DeterministicSolution(times, U_history)
 end
@@ -361,7 +495,9 @@ function stochastic_collocation_driver(
     n::Int,
     testcase::EulerTestCase,
     M::Int;
-    nodes_type::String = "uniform")
+    nodes_type::String = "uniform",
+    nsnapshots::Int = 100,
+    cfl_parameter::Float64 = 0.8)
 
     # --------------------------------------------------
     # Choose collocation points
@@ -379,13 +515,15 @@ function stochastic_collocation_driver(
     # Solve deterministic problems
     # --------------------------------------------------
     
-      deterministic_solutions = DeterministicSolution[] #create empty vector of DeterministicSolution to store solutions for each omega
+    deterministic_solutions = Vector{DeterministicSolution}(undef, M) #create empty vector of DeterministicSolution to store solutions for each omega
 
-    for omega in omega_nodes
+    Threads.@threads for m in eachindex(omega_nodes) #parallelized computation
 
-        sol = solver_FV(n, testcase, omega)
-
-        push!(deterministic_solutions, sol)
+     deterministic_solutions[m] = solver_FV(n,
+                                            testcase,
+                                            omega_nodes[m];
+                                            cfl_parameter = cfl_parameter,
+                                            nsnapshots = nsnapshots)
     end
 
     return StochasticSolution(omega_nodes, deterministic_solutions)
@@ -574,6 +712,7 @@ function evaluate_at_omega(
                     omega_nodes,
                     data,
                     reconstruction_method)
+                # Uj[k,i] = data[end]
             end
         end
 
@@ -631,7 +770,7 @@ MAIN SIMULATION FUNCTION
 
 n, M, testcase, omega_fine, reconstruction_method (constant/cubic/polynomial); cfl_parameter -> StochasticSolution(omega_fine, reconstructed_solutions)
 """
-function main( 
+function main_old( 
     n::Int,
     M::Int,
     testcase::EulerTestCase,
@@ -659,4 +798,38 @@ function main(
                                                solution_at_nodes,
                                                reconstruction_method)
     return solution
+end
+
+function main(
+    n::Int,
+    M::Int,
+    testcase::EulerTestCase,
+    omega_fine::Vector{Float64},
+    reconstruction_method::String;
+    cfl_parameter::Float64 = 0.8,
+    nsnapshots::Int = 20)
+
+    nodes_type =
+        if reconstruction_method == "constant" || reconstruction_method == "cubic"
+            "uniform"
+        elseif reconstruction_method == "polynomial"
+            "lobatto"
+        else
+            error("Unknown reconstruction method: $reconstruction_method")
+        end
+
+    solution_at_nodes = stochastic_collocation_driver(
+        n,
+        testcase,
+        M;
+        nodes_type = nodes_type,
+        nsnapshots = nsnapshots,
+        cfl_parameter = cfl_parameter,
+    )
+
+    return reconstruct_stochastic_solution(
+        omega_fine,
+        solution_at_nodes,
+        reconstruction_method,
+    )
 end
