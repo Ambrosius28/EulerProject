@@ -6,6 +6,12 @@ Solver for compressible inviscid Euler equations in 1D.
 
 **Authors:** Areej Ghabayen, Jan-Eric Fries, Marco Ambrogio Bergamo, Sara Jalaouy.
 
+**Always start the Julia REPL with**
+
+```julia -t auto --project=.```
+
+(for enabling multi-thread and packages needed).
+
 ---
 
 ## Overview
@@ -33,6 +39,11 @@ The solver tackles the 1D compressible Euler equations using:
 ---
 
 ## Quick start
+**Always start the Julia REPL with**
+
+```julia -t auto --project=.```
+
+(for enabling multi-thread and packages needed).
 
 Each exercise script follows the same pattern:
 
