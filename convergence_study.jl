@@ -31,8 +31,8 @@ end
 # ------------------------------------------------------------------------------
 # Reference solution: M=64, method=cubic, t=T
 # ------------------------------------------------------------------------------
-function reference_solution(n, testcase, omega_fine; cfl_parameter=0.8, M_ref=64, ref_method="polynomial")
-    sol_ref = main(n, M_ref, testcase, omega_fine, ref_method; cfl_parameter=cfl_parameter)
+function reference_solution(testcase::EulerTestCase, par_ref::Parameters)
+    sol_ref = main(testcase, par_ref)
     U = tensorize(sol_ref)
     return U[:, end, :, :]
 end
@@ -40,8 +40,8 @@ end
 # ------------------------------------------------------------------------------
 # Stochastic-collocation solution: t=T
 # ------------------------------------------------------------------------------
-function collocation_solution(n, M, testcase, omega_fine, method; cfl_parameter=0.8)
-    sol_fine = main(n, M, testcase, omega_fine, method; cfl_parameter = cfl_parameter)
+function collocation_solution(testcase::EulerTestCase, par::Parameters)
+    sol_fine = main(testcase, par)
     U = tensorize(sol_fine)
     return U[:, end, :, :]
 end
@@ -81,23 +81,23 @@ end
 # ------------------------------------------------------------------------------
 function convergence_study(
     testcase::EulerTestCase,
-    n::Int,
-    M_values::Vector{Int},
-    method::String,
-    omega_eval::Vector{Float64},
+    par::Parameters,
     omega_weights::Vector{Float64},
     U_ref::Array{Float64,3};   # precomputed once per case, shared across methods
-    component::Int = 1,
-    cfl_parameter::Float64 = 0.8)
+    component::Int = 1)
 
-    dx = testcase.L / n
+    dx = testcase.L / par.n
+    method = par.ansatz_space
 
     errors_L1 = Float64[]
     errors_L2 = Float64[]
 
+    M_values = par.M_values
+    println("  -> computing collocation solutions for M = $M_values, method = $method ...")
     for M in M_values
+        par.M = M
         println("  -> method = $method, M = $M")
-        U_M = collocation_solution(n, M, testcase, omega_eval,  method; cfl_parameter = cfl_parameter)
+        U_M = collocation_solution(testcase, par)
 
         push!(errors_L1, Lp_error(U_M, U_ref, component, 1, dx, omega_weights))
         push!(errors_L2, Lp_error(U_M, U_ref, component, 2, dx, omega_weights))
@@ -131,19 +131,21 @@ end
 # ------------------------------------------------------------------------------
 function cauchy_convergence_study(
     testcase::EulerTestCase,
-    n::Int,
-    M_values::Vector{Int},
-    method::String,
-    omega_eval::Vector{Float64},
+    par::Parameters,
     omega_weights::Vector{Float64};
-    component::Int = 1,
-    cfl_parameter::Float64 = 0.8)
+    component::Int = 1)
 
-    dx = testcase.L / n
+    dx = testcase.L / par.n
+    method = par.ansatz_space
 
+    M_values = par.M_values
     println("  -> (Cauchy) computing collocation solutions for M = $M_values, method = $method ...")
-    U_list = [collocation_solution(n, M, testcase, omega_eval,  method; cfl_parameter = cfl_parameter)
-              for M in M_values]
+    
+    U_list = Array{Float64,3}[]
+    for M in M_values
+        par.M = M
+        push!(U_list, collocation_solution(testcase, par))
+    end
 
     errors_L1 = Float64[]
     errors_L2 = Float64[]
@@ -212,13 +214,15 @@ sanitize_filename(s::String) = replace(s, r"[^A-Za-z0-9]+" => "_")
 function run_full_convergence_study(
     name::String,
     testcase::EulerTestCase,
-    n::Int,
-    M_values::Vector{Int};
+    par::Parameters,
+    par_ref::Parameters;
     component::Int = 1,
-    cfl_parameter::Float64 = 0.8,
-    n_gauss::Int = 60,
     convergence_mode::Symbol = :reference,   # :reference or :cauchy
     figdir::String = "figures/convergence/")
+
+    n = par.n
+    n_gauss = par.nomega_fine
+    M_values = par.M_values
 
     isdir(figdir) || mkpath(figdir)
 
@@ -243,7 +247,7 @@ function run_full_convergence_study(
     # the same n_gauss deterministic problems 3 times over.
     U_ref = if convergence_mode == :reference
         println("  -> building reference solution (n=$n, $(length(omega_eval)) Gauss-Legendre omega points)...")
-        reference_solution(n, testcase, omega_eval; cfl_parameter = cfl_parameter)
+        reference_solution(testcase, par_ref)
     else
         nothing
     end
@@ -252,15 +256,17 @@ function run_full_convergence_study(
     results = Dict{String, Any}()
 
     for method in methods
-        result = if convergence_mode == :reference
-            convergence_study(testcase, n, M_values, method, omega_eval, omega_weights, U_ref;
-                               component = component, cfl_parameter = cfl_parameter)
-        elseif convergence_mode == :cauchy
-            cauchy_convergence_study(testcase, n, M_values, method, omega_eval, omega_weights;
-                                      component = component, cfl_parameter = cfl_parameter)
-        else
+        par.ansatz_space = method
+        result = 
+            if convergence_mode == :reference
+            convergence_study(testcase, par, omega_weights, U_ref;
+                               component = component)
+            elseif convergence_mode == :cauchy
+            cauchy_convergence_study(testcase, par, omega_weights;
+                               component = component)
+            else
             error("Unknown convergence_mode: $convergence_mode (use :reference or :cauchy)")
-        end
+            end
         results[method] = result
         print_table(method, result)
     end
@@ -333,23 +339,36 @@ end
 #                 consistent with how the deterministic mesh-refinement
 #                 study in Part 1 was done.
 
+parameters = Parameters(
+    n = 50,  
+    M_values = [4, 8 , 12, 16, 24, 32],   
+    nomega_fine = 40,  
+)
+
+parameters_ref = Parameters(
+    n = parameters.n,
+    M = 64,   # reference solution uses a much finer collocation
+    nomega_fine = parameters.nomega_fine,
+    ansatz_space = "cubic",   # reference solution uses the most accurate ansatz
+)
+
 cases = [
-    #("ex_2_2_i",   exercise_2_2_i,   50, [4, 8, 12, 16, 24, 32], 40), #n, M, number of omega_fine
-    ("ex_2_2_ii",  exercise_2_2_ii,  50, [4, 8, 12, 16, 24, 32], 40),
-    ("ex_2_3_i",   exercise_2_3_i,   50, [4, 8, 12, 16, 24, 32], 40),
-    ("ex_2_3_ii",  exercise_2_3_ii,  50, [4, 8, 12, 16, 24, 32], 40),
-    ("ex_2_4_i",   exercise_2_4_i,   50, [4, 8, 12, 16, 24, 32], 40),
-    ("ex_2_4_ii",  exercise_2_4_ii,  50, [4, 8, 12, 16, 24, 32], 40),
+    ("ex_2_2_i",   exercise_2_2_i),
+    ("ex_2_2_ii",  exercise_2_2_ii),
+    ("ex_2_3_i",   exercise_2_3_i),
+    ("ex_2_3_ii",  exercise_2_3_ii),
+    ("ex_2_4_i",   exercise_2_4_i),
+    ("ex_2_4_ii",  exercise_2_4_ii),
 ]
 
 all_results = Dict{String, Any}()
 
-for (name, testcase, n, M_values, n_gauss) in cases
+for (name, testcase) in cases
     all_results["$(name)_reference"] = run_full_convergence_study(
-        name, testcase, n, M_values; n_gauss = n_gauss, convergence_mode = :reference)
+        name, testcase, parameters, parameters_ref; convergence_mode = :reference)
 
     all_results["$(name)_cauchy"] = run_full_convergence_study(
-        name, testcase, n, M_values; n_gauss = n_gauss, convergence_mode = :cauchy)
+        name, testcase, parameters, parameters_ref; convergence_mode = :cauchy)
 end
 
 println()
