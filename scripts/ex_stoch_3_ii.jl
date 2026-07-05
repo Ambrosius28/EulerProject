@@ -14,26 +14,19 @@ println("====================================================")
 println("Exercise 2.3 (ii)")
 println("====================================================")
 
-# Spatial mesh
-n = 100
-
 # Test case
 testcase = exercise_2_3_ii
 
-# Collocation levels for convergence study
-M_values = [4, 8, 16]
-
-# Fine omega grid for visualization
-omega_fine = collect(range(0.0, 1.0, length=200))
+parameters = Parameters(
+    n = 200,
+    M_values = [64],
+    omega_fine = collect(range(0.0, 1.0, length=200)),
+    ansatz_space = "constant",
+    nsnapshots = 4
+)
 
 # Directory for figures
 figdir = "figures/ex_stoch_3_ii/"
 isdir(figdir) || mkpath(figdir)
 
-plot_heatmap_rho(testcase,
-    M_values,
-    "constant",
-    n,
-    4,
-    omega_fine,
-    figdir)
+plot_mean_rho(testcase, parameters, figdir)

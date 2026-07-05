@@ -57,8 +57,21 @@ function max_wave_speed(U_left::AbstractVector, U_right::AbstractVector, gamma::
 end
 
 # ==============================================================================
-# SECTION 2 — Definition of test cases
+# SECTION 2 — Definition of new types: Parameters, EulerTestCase, DeterministicSolution, StochasticSolution
 # ==============================================================================
+"""
+Parameters for the stochastic Euler solver.
+"""
+Base.@kwdef struct Parameters  #Base.@kwdef allows for default values and keyword arguments in the constructor (you call them by par.n etc.)
+    n::Int
+    M::Int = 3
+    M_values::Vector{Int} = [3]
+    omega_fine::Vector{Float64}
+    ansatz_space::String
+    cfl_parameter::Float64 = 0.8
+    nsnapshots::Int = 20
+end
+
 # TODO: define this as a parametric type with GType, BCType, ICType instead of Function.
 Base.@kwdef struct EulerTestCase
     T::Float64
@@ -86,7 +99,9 @@ struct StochasticSolution
     solutions::Vector{DeterministicSolution}
 end
 
-
+# ==============================================================================
+# SECTION 2.5 — Definition of test cases
+# ==============================================================================
 exercise_2_2_i = EulerTestCase(
     T = 0.5,
     L = 1.0,
@@ -345,12 +360,7 @@ function cfl_timestep(U, n, cfl_parameter, dx, gamma)
     return cfl_parameter * dx / s_max
 end
 
-"""
-(FIRST STAGE): Solves the deterministic FV+Explicit Euler problem for a given omega 
-and returns the DeterministicSolution(omega, times, U_history).
 
-n, testcase, omega; cfl_parameter=0.8 -> DeterministicSolution(times, U_history)
-"""
 function solver_FV_old(
     n::Int,
     testcase::EulerTestCase,
@@ -397,6 +407,12 @@ function solver_FV_old(
     return DeterministicSolution(times, U_history)
 end
 
+"""
+FIRST STAGE: Solves the deterministic FV+Explicit Euler problem for a given omega 
+and returns the DeterministicSolution(omega, times, U_history).
+
+n, testcase, omega; cfl_parameter=0.8 -> DeterministicSolution(times, U_history)
+"""
 function solver_FV(
     n::Int,
     testcase::EulerTestCase,
@@ -486,7 +502,7 @@ function legendre_lobatto_omegas(M::Int)
 end
 
 """
-(SECOND STAGE): It computes the loop over a given number M of omegas of the deterministic FV+Explicit Euler solution  
+SECOND STAGE: It computes the loop over a given number M of omegas of the deterministic FV+Explicit Euler solution  
 and returns the collocation nodes and the corresponding solutions.
 
 n, testcase, M, node_type (uniform/lobatto) -> StochasticSolution(omega_nodes, deterministic_solutions)
@@ -530,7 +546,7 @@ function stochastic_collocation_driver(
 end
 
 """
-FIRST STAGE It is the loop over omega_nodes of FV+Euler-Explicit, but with common time stepping for all omegas. 
+(First stage for old implementation) It is the loop over omega_nodes of FV+Euler-Explicit, but with common time stepping for all omegas. 
 It returns a StochasticSolution with the same time steps for all omegas.
 
 n, testcase, M, node_type (uniform/lobatto), reconstruction_method (constant/cubic/polynomial) -> StochasticSolution(omega_nodes, solutions)
@@ -723,7 +739,7 @@ function evaluate_at_omega(
 end
 
 """
-SECOND STAGE (THIRD STAGE): it returns a StochasticSolution with the reconstructed solutions at the fine omega grid using the specified reconstruction method.
+THIRD STAGE: it returns a StochasticSolution with the reconstructed solutions at the fine omega grid using the specified reconstruction method.
 
 omega_fine, stochastic, reconstruction_method -> StochasticSolution(omega_fine, reconstructed_solutions)
 """
@@ -765,11 +781,6 @@ function tensorize(stoch::StochasticSolution)
     return U
 end
 
-"""
-MAIN SIMULATION FUNCTION
-
-n, M, testcase, omega_fine, reconstruction_method (constant/cubic/polynomial); cfl_parameter -> StochasticSolution(omega_fine, reconstructed_solutions)
-"""
 function main_old( 
     n::Int,
     M::Int,
@@ -800,22 +811,27 @@ function main_old(
     return solution
 end
 
-function main(
-    n::Int,
-    M::Int,
-    testcase::EulerTestCase,
-    omega_fine::Vector{Float64},
-    reconstruction_method::String;
-    cfl_parameter::Float64 = 0.8,
-    nsnapshots::Int = 20)
+"""
+MAIN SIMULATION FUNCTION
+
+n, M, testcase, omega_fine, reconstruction_method (constant/cubic/polynomial); cfl_parameter -> StochasticSolution(omega_fine, reconstructed_solutions)
+"""
+function main(testcase::EulerTestCase, par::Parameters)
+
+    n = par.n
+    M = par.M
+    omega_fine = par.omega_fine
+    ansatz_space = par.ansatz_space
+    cfl_parameter = par.cfl_parameter
+    nsnapshots = par.nsnapshots
 
     nodes_type =
-        if reconstruction_method == "constant" || reconstruction_method == "cubic"
+        if ansatz_space == "constant" || ansatz_space == "cubic"
             "uniform"
-        elseif reconstruction_method == "polynomial"
+        elseif ansatz_space == "polynomial"
             "lobatto"
         else
-            error("Unknown reconstruction method: $reconstruction_method")
+            error("Unknown reconstruction method: $ansatz_space")
         end
 
     solution_at_nodes = stochastic_collocation_driver(
@@ -830,6 +846,6 @@ function main(
     return reconstruct_stochastic_solution(
         omega_fine,
         solution_at_nodes,
-        reconstruction_method,
+        ansatz_space,
     )
 end
