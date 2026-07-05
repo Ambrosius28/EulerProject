@@ -62,14 +62,14 @@ end
 """
 Parameters for the stochastic Euler solver.
 """
-Base.@kwdef struct Parameters  #Base.@kwdef allows for default values and keyword arguments in the constructor (you call them by par.n etc.)
-    n::Int
+Base.@kwdef mutable struct Parameters  #Base.@kwdef allows for default values and keyword arguments in the constructor (you call them by par.n etc.)
+    n::Int 
     M::Int = 3
     M_values::Vector{Int} = [3]
-    omega_fine::Vector{Float64}
-    ansatz_space::String
+    nomega_fine::Int
+    ansatz_space::String = "constant"
     cfl_parameter::Float64 = 0.8
-    nsnapshots::Int = 20
+    nsnapshots::Int = 4
 end
 
 # TODO: define this as a parametric type with GType, BCType, ICType instead of Function.
@@ -820,7 +820,7 @@ function main(testcase::EulerTestCase, par::Parameters)
 
     n = par.n
     M = par.M
-    omega_fine = par.omega_fine
+    omega_fine = collect(range(0.0, 1.0, length=par.nomega_fine)) 
     ansatz_space = par.ansatz_space
     cfl_parameter = par.cfl_parameter
     nsnapshots = par.nsnapshots

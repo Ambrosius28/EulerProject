@@ -4,7 +4,7 @@ function plot_heatmap_rho(testcase::EulerTestCase, par::Parameters, figdir::Stri
     ansatz_space = par.ansatz_space
     n = par.n
     nsnapshots = par.nsnapshots
-    omega_fine = par.omega_fine
+    omega_fine = collect(range(0.0, 1.0, length=par.nomega_fine))
 
     gr()
     mkpath(figdir)
@@ -16,18 +16,11 @@ function plot_heatmap_rho(testcase::EulerTestCase, par::Parameters, figdir::Stri
     for M in M_values
 
         println("Running M = $M")
-        parM = Parameters(; # we have to do this because doing par.M = M would not work since par is immutable
-            n = par.n,
-            M = M,
-            M_values = par.M_values,
-            omega_fine = par.omega_fine,
-            ansatz_space = par.ansatz_space,
-            cfl_parameter = par.cfl_parameter,
-            nsnapshots = par.nsnapshots)
+        par.M = M
         # ------------------------------------------------
         # Stochastic solve + reconstruction via main
         # ------------------------------------------------
-        fine_stoch = main(testcase, parM)
+        fine_stoch = main(testcase, par)
 
         times = fine_stoch.solutions[1].times
         nt    = length(times)
@@ -90,7 +83,7 @@ function plot_mean_rho(testcase::EulerTestCase, par::Parameters, figdir::String)
     ansatz_space = par.ansatz_space
     n = par.n
     nsnapshots = par.nsnapshots
-    omega_fine = par.omega_fine
+    omega_fine = collect(range(0.0, 1.0, length=par.nomega_fine)) 
 
     gr()
     mkpath(figdir)
@@ -102,18 +95,11 @@ function plot_mean_rho(testcase::EulerTestCase, par::Parameters, figdir::String)
     for M in M_values
 
         println("Running M = $M")
-        parM = Parameters(; # we have to do this because doing par.M = M would not work since par is immutable
-            n = par.n,
-            M = M,
-            M_values = par.M_values,
-            omega_fine = par.omega_fine,
-            ansatz_space = par.ansatz_space,
-            cfl_parameter = par.cfl_parameter,
-            nsnapshots = par.nsnapshots)
+        par.M = M
         # ------------------------------------------------
         # Stochastic solve + reconstruction via main
         # ------------------------------------------------
-        fine_stoch = main(testcase, parM)
+        fine_stoch = main(testcase, par)
 
         times = fine_stoch.solutions[1].times
         nt    = length(times)

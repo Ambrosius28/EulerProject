@@ -20,7 +20,7 @@ testcase = exercise_2_4_i
 parameters = Parameters(
     n = 100,
     M_values = [64],
-    omega_fine = collect(range(0.0, 1.0, length=200)),
+    nomega_fine = 200,
     ansatz_space = "constant",
     nsnapshots = 4
 )
