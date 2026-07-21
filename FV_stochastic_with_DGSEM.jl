@@ -93,7 +93,7 @@ Base.@kwdef mutable struct Parameters  #Base.@kwdef allows for default values an
     n::Int 
     M::Int = 3
     M_values::Vector{Int} = [3]
-    nomega_fine::Int
+    nomega_fine::Vector{Float64}
     ansatz_space::String = "constant"
     cfl_parameter::Float64 = 0.1 # für DG 0.1
     nsnapshots::Int = 4
@@ -426,7 +426,7 @@ Local Lax-Friedrichs (Rusanov) numerical flux for the Euler equations between tw
 
 U_left, U_right, gamma -> F_num (3x1 vector)
 """
-function DGSEM_time_step!(inv_D_T_M, dU::AbstractArray, U::AbstractArray, interface_fluxes,
+function DGSEM_time_step!(testcase::EulerTestCase,inv_D_T_M, dU::AbstractArray, U::AbstractArray, interface_fluxes,
                     u_bc_left, u_bc_right, flux_left, flux_right, flux_buffer, p, t)
     dU .= 0.0
 
@@ -559,20 +559,20 @@ function solve_euler_for_omega(n::Int, testcase::EulerTestCase, omega::Float64;
             U_n = copy(U)
 
             #U = finite_volume_time_step(U, dx, dt, n, gamma)
-            DGSEM_time_step!(inv_D_T_M, dU, U, interface_fluxes, u_bc_left, u_bc_right, 
+            DGSEM_time_step!(testcase,inv_D_T_M, dU, U, interface_fluxes, u_bc_left, u_bc_right, 
                             flux_left, flux_right, flux_buffer, parameters, t) 
                             #! for DGSEM (name changed from finite_volume_time_step to DGSEM_time_step!)
             U .= U_n + dt .* dU
             apply_limiter!(U, basis, X, dx, testcase) # The limiter must be applied at every intermediate stage.
 
             # stage 2
-            DGSEM_time_step!(inv_D_T_M, dU, U, interface_fluxes, u_bc_left, u_bc_right, flux_left, flux_right, flux_buffer,
+            DGSEM_time_step!(testcase,inv_D_T_M, dU, U, interface_fluxes, u_bc_left, u_bc_right, flux_left, flux_right, flux_buffer,
                          parameters, t + dt) # passing 't' isn't actually important in our case, as it's an autonomous problem 
             U .= 0.75 * U_n + 0.25 .* (U + dt .* dU)
             apply_limiter!(U, basis, X, dx, testcase)
 
             # stage 3
-            DGSEM_time_step!(inv_D_T_M, dU, U, interface_fluxes, u_bc_left, u_bc_right, flux_left, flux_right, flux_buffer,
+            DGSEM_time_step!(testcase,inv_D_T_M, dU, U, interface_fluxes, u_bc_left, u_bc_right, flux_left, flux_right, flux_buffer,
                          parameters, t + 0.5 * dt)
             U .= (1/3) .* U_n  + (2/3) .* (U + dt .* dU)
             apply_limiter!(U, basis, X, dx, testcase)
@@ -584,7 +584,7 @@ function solve_euler_for_omega(n::Int, testcase::EulerTestCase, omega::Float64;
         push!(U_history, copy(U[:,:,:]))
     end
 
-    return DeterministicSolution(times, U_history), X
+    return DeterministicSolution(times, U_history), X, basis
 end
 
 
@@ -647,18 +647,18 @@ function stochastic_collocation_driver(
     
     deterministic_solutions = Vector{DeterministicSolution}(undef, M) #create empty vector of DeterministicSolution to store solutions for each omega
 
-    _, X = solve_euler_for_omega(n,testcase,omega_nodes[1];cfl_parameter = cfl_parameter,nsnapshots = nsnapshots)
+    _, X, basis = solve_euler_for_omega(n,testcase,omega_nodes[1];cfl_parameter = cfl_parameter,nsnapshots = nsnapshots)
 
     Threads.@threads for m in eachindex(omega_nodes) #parallelized computation
 
-     deterministic_solutions[m], _ = solve_euler_for_omega(n,
+     deterministic_solutions[m], _, _ = solve_euler_for_omega(n,
                                             testcase,
                                             omega_nodes[m];
                                             cfl_parameter = cfl_parameter,
                                             nsnapshots = nsnapshots)
     end
 
-    return StochasticSolution(omega_nodes, deterministic_solutions), X
+    return StochasticSolution(omega_nodes, deterministic_solutions), X, basis
 end
 
 """
@@ -778,20 +778,20 @@ function stochastic_collocation_driver_common_dt(
                     U_n = copy(U)
 
                     #U = finite_volume_time_step(U, dx, dt, n, gamma)
-                    DGSEM_time_step!(inv_D_T_M, dU, U, interface_fluxes_all[m], u_bc_left_all[m], u_bc_right_all[m], 
+                    DGSEM_time_step!(testcase,inv_D_T_M, dU, U, interface_fluxes_all[m], u_bc_left_all[m], u_bc_right_all[m], 
                                     flux_left_all[m], flux_right_all[m], flux_buffer_all[m], parameters, t) 
                                     #! for DGSEM (name changed from finite_volume_time_step to DGSEM_time_step!)
                     U .= U_n + dt_min .* dU
                     apply_limiter!(U, basis, X, dx, testcase) # The limiter must be applied at every intermediate stage.
 
                     # stage 2
-                    DGSEM_time_step!(inv_D_T_M, dU, U, interface_fluxes_all[m], u_bc_left_all[m], u_bc_right_all[m], flux_left_all[m],
+                    DGSEM_time_step!(testcase,inv_D_T_M, dU, U, interface_fluxes_all[m], u_bc_left_all[m], u_bc_right_all[m], flux_left_all[m],
                                 flux_right_all[m], flux_buffer_all[m], parameters, t + dt_min) # passing 't' isn't actually important in our case, as it's an autonomous problem 
                     U .= 0.75 * U_n + 0.25 .* (U + dt_min .* dU)
                     apply_limiter!(U, basis, X, dx, testcase)
 
                     # stage 3
-                    DGSEM_time_step!(inv_D_T_M, dU, U, interface_fluxes_all[m], u_bc_left_all[m], u_bc_right_all[m], flux_left_all[m],
+                    DGSEM_time_step!(testcase,inv_D_T_M, dU, U, interface_fluxes_all[m], u_bc_left_all[m], u_bc_right_all[m], flux_left_all[m],
                                 flux_right_all[m], flux_buffer_all[m], parameters, t + 0.5 * dt_min)
                     U .= (1/3) .* U_n  + (2/3) .* (U + dt_min .* dU)
                     apply_limiter!(U, basis, X, dx, testcase)
@@ -909,7 +909,7 @@ function evaluate_at_omega(
         @warn "Inkonsistente Anzahl an Zeitschritten gefunden!"
     end
 
-    target_times = solutions[max(1, M ÷ 2)].times # times of the first omega solution
+    target_times = solutions[max(1, M ÷ 2)].times # times of the M/2 omega solution
     number_timesteps = length(solutions[1].times)
     U_interp = Vector{Array{Float64, 3}}(undef, number_timesteps)
     ncomp, nnodes, nelements = size(solutions[1].U[1])
@@ -1032,10 +1032,11 @@ function main(testcase::EulerTestCase, par::Parameters)
 
     n = par.n
     M = par.M
-    omega_fine = collect(range(0.0, 1.0, length=par.nomega_fine)) 
+    omega_fine = par.nomega_fine
     ansatz_space = par.ansatz_space
     cfl_parameter = par.cfl_parameter
     nsnapshots = par.nsnapshots
+    println("DEBUG: main() gestartet mit M = ", M)
 
     nodes_type =
         if ansatz_space == "constant" || ansatz_space == "cubic"
@@ -1054,7 +1055,7 @@ function main(testcase::EulerTestCase, par::Parameters)
         cfl_parameter = cfl_parameter,
     )=#
 
-    solution_at_nodes, X = stochastic_collocation_driver(
+    solution_at_nodes, X, basis = stochastic_collocation_driver(
         n,
         testcase,
         M;
@@ -1063,12 +1064,12 @@ function main(testcase::EulerTestCase, par::Parameters)
         cfl_parameter = cfl_parameter,
     )
     
-    solution = reconstruct_stochastic_solution(
+    solution = reconstruct_stochastic_solution( # type: StochasticSolution
         omega_fine,
         solution_at_nodes,
         ansatz_space,
         M
     )
 
-    return solution, X
+    return solution, X, basis
 end
