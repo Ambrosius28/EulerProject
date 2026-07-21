@@ -4,13 +4,13 @@ function plot_heatmap_rho(testcase::EulerTestCase, par::Parameters, figdir::Stri
     ansatz_space = par.ansatz_space
     n = par.n
     nsnapshots = par.nsnapshots
-    omega_fine = collect(range(0.0, 1.0, length=par.nomega_fine))
+    omega_fine = par.nomega_fine
 
     gr()
     mkpath(figdir)
 
     par.M = M_values[1]
-    _, X = main(testcase, par) # for x-axis
+    _, X,_ = main(testcase, par) # for x-axis
 
     x = vec(X)
 
@@ -21,7 +21,7 @@ function plot_heatmap_rho(testcase::EulerTestCase, par::Parameters, figdir::Stri
         # ------------------------------------------------
         # Stochastic solve + reconstruction via main
         # ------------------------------------------------
-        fine_stoch, _ = main(testcase, par)
+        fine_stoch, _, _ = main(testcase, par)
 
         times = fine_stoch.solutions[1].times
         nt    = length(times)
@@ -84,13 +84,13 @@ function plot_mean_rho(testcase::EulerTestCase, par::Parameters, figdir::String)
     ansatz_space = par.ansatz_space
     n = par.n
     nsnapshots = par.nsnapshots
-    omega_fine = collect(range(0.0, 1.0, length=par.nomega_fine)) 
+    omega_fine = par.nomega_fine
 
     gr()
     mkpath(figdir)
 
     par.M = M_values[1]
-    _, X = main(testcase, par) # for x-axis
+    _, X, _ = main(testcase, par) # for x-axis
 
     x = vec(X)
 
@@ -101,7 +101,7 @@ function plot_mean_rho(testcase::EulerTestCase, par::Parameters, figdir::String)
         # ------------------------------------------------
         # Stochastic solve + reconstruction via main
         # ------------------------------------------------
-        fine_stoch, _ = main(testcase, par)
+        fine_stoch, _, _ = main(testcase, par)
 
         times = fine_stoch.solutions[1].times
         nt    = length(times)
