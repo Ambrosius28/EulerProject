@@ -11,3 +11,9 @@ animations/
 # Temporary files
 *.tmp
 *.log
+
+# macOS
+.DS_Store
+
+# CondaPkg local environment
+.CondaPkg/
