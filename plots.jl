@@ -77,6 +77,42 @@ function plot_heatmap_rho(testcase::EulerTestCase, par::Parameters, figdir::Stri
     return nothing
 end
 
+function plot_heatmap_rho_T(testcase::EulerTestCase, par::Parameters, sol::StochasticSolution, figdir::String)
+
+    gr()
+    mkpath(figdir)
+
+    @unpack n = par
+    @unpack M = par
+    @unpack nomega_fine = par
+    omega_fine = collect(range(0.0, 1.0, length = nomega_fine)) 
+
+
+    dx = testcase.L / n
+    x = [(i - 0.5) * dx for i in 1:n]
+
+    Z = zeros(length(omega_fine), n)
+
+    for (k, solω) in enumerate(sol.solutions)
+        Z[k, :] .= solω.U[end][1, :]
+    end
+
+    p = heatmap(
+        x,
+        omega_fine,
+        Z;
+        xlabel = "x",
+        ylabel = "ω",
+        title = "ρ(x,ω), t = T",
+        colorbar = true,
+        aspect_ratio = :auto,
+    )
+
+    savefig(p, joinpath(figdir, "rho_heatmap_M$(M).png"))
+
+    return nothing
+end
+
 function plot_mean_rho(testcase::EulerTestCase, par::Parameters, figdir::String)
 
     M_values = par.M_values
