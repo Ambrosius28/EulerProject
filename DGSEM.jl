@@ -284,7 +284,7 @@ function apply_limiter!(U,basis,X,dx,type) # U: [n_vars, nodes, elements], X[nod
     mean_array = zeros(3, elements)
 
     # mean for each cell
-    # $$\bar{U}_l = 1\Länge(I_l) ∫_{I_l} U(x) dx = 1\Länge(I_l) ∑_{k=0}_{n} Uk * wk
+    # $$\bar{U}_l = 1\length(I_l) ∫_{I_l} U(x) dx = 1\length(I_l) ∑_{k=0}_{n} Uk * wk
     for l in 1:elements  
         mean_array[1,l] = sum(basis.weights .* U[1,:,l]) / sum_weights
         mean_array[2,l] = sum(basis.weights .* U[2,:,l]) / sum_weights
@@ -354,35 +354,35 @@ function apply_limiter!(U,basis,X,dx,type) # U: [n_vars, nodes, elements], X[nod
         U_E_right_value = E_mean + minmod_corrected(a1_right, a2, a3,M,dx)
         U_E_left_value = E_mean - minmod_corrected(a1_left, a2, a3,M,dx)
 
-        x_center_l = sum(X[:,l]) / nodes # Stützstellen bei Gauß-Legendre-Knoten symmetrisch um Mittelpunkt
+        x_center_l = sum(X[:,l]) / nodes # Gauss-Legendre quadrature nodes are symmetric around the midpoint
 
-        # quadratischen Fehler zwischen U und L minimieren:
+        # minimize the squared error between U and L:
         # F(a, b) = ∫{-1}^{1} (U(ξ) - (a + bξ))^2 
-        # leite Ausdruck nach b ab und setze gleich Null
-        # Term  ∫_{-1}^{1} ξ dξ fällt aufgrund der Orthogonalität weg
-        # stelle nach b um:
-        # b = ∫_{-1}^{1} U(ξ)*ξ dξ/∫_{-1}^{1} ξ^2 dξ, in L^2-Skalarproduktform:
-        # ⟨ U, ξ ⟩ / ⟨ ξ, ξ ⟩, benutze Gauß-Lobatto-Quadratur zum Integrieren
-        # Zähler ist ≈ ∑_{k=1}^{N} weights_k ⋅ U_k ⋅ nodes_k 
-        # Nenner ist  ≈ ∑_{k=1}^{N} weights_k ⋅ (nodes_k)^2 (norm_factor im Code)
+        # differentiate the expression with respect to b and set it equal to zero
+        # term  ∫_{-1}^{1} ξ dξ cancels out due to orthogonality
+        # change after b:
+        # b = ∫_{-1}^{1} U(ξ)*ξ dξ/∫_{-1}^{1} ξ^2 dξ, in L^2-Scalar product form:
+        # ⟨ U, ξ ⟩ / ⟨ ξ, ξ ⟩, use Gauss-Lobatto quadrature for integration
+        # Numerator is ≈ ∑_{k=1}^{N} weights_k ⋅ U_k ⋅ nodes_k 
+        # Denominator it  ≈ ∑_{k=1}^{N} weights_k ⋅ (nodes_k)^2 (norm_factor in code)
         basis_nodes = basis.nodes
         norm_factor = sum(basis.weights .* basis_nodes.^2)
         
-        # Bedingung (ii), ob u_{j+1/2}^{-} = v_{j+1/2}^{-} und u_{j-1/2}^{+} = v_{j-1/2}^{+}
-        # für ρ
+        # condition (ii), if u_{j+1/2}^{-} = v_{j+1/2}^{-} and u_{j-1/2}^{+} = v_{j-1/2}^{+}
+        # for ρ
         if (abs(U_ρ_right_value - ρ_right_value) > tol || abs(U_ρ_left_value - ρ_left_value) > tol)
-           # Berechnung der L2-Projektions-Steigung für die Dichte (Variable 1)
+           # Calculation of the L2 projection slope for the density (variable 1)
            v_x_rho = sum(basis.weights .* U[1,:,l] .* basis_nodes) / norm_factor
-           v_x_rho *= (1.0 / half_length) # Skalierungsfaktor, um in den echten Raum abzubilden
-           # Jetzt den Limiter auf diese physikalisch korrekte Steigung anwenden:
+           v_x_rho *= (1.0 / half_length) # Scaling factor to map back to real space
+           # And now apply the limiter to this physically correct slope:
            slope = minmod(v_x_rho, (ρ_mean_right - ρ_mean) / half_length, (ρ_mean - ρ_mean_left) / half_length)
            #local_slope = (U[1,nodes,l] - U[1,1,l]) / (X[nodes,l] - X[1,l])
            #slope = minmod(local_slope, (ρ_mean_right - ρ_mean) / half_length, (ρ_mean - ρ_mean_left) / half_length)
-           # neues, lineares Polynom wird erzeugt
+           # new linear polynomial is generated
            U[1,:,l] = ρ_mean .+ (X[:,l] .- x_center_l) .* slope
         end
 
-        # für m
+        # for m
         if (abs(U_m_right_value - m_right_value) > tol || abs(U_m_left_value - m_left_value) > tol)
            v_x_m = sum(basis.weights .* U[2,:,l] .* basis_nodes) / norm_factor
            v_x_m *= (1.0 / half_length)
@@ -392,7 +392,7 @@ function apply_limiter!(U,basis,X,dx,type) # U: [n_vars, nodes, elements], X[nod
            U[2,:,l] = m_mean .+ (X[:,l] .- x_center_l) .* slope
         end
 
-        # für E
+        # for E
         if (abs(U_E_right_value - E_right_value) > tol || abs(U_E_left_value - E_left_value) > tol)
            v_x_E = sum(basis.weights .* U[3,:,l] .* basis_nodes) / norm_factor
            v_x_E *= (1.0 / half_length)
@@ -405,15 +405,15 @@ function apply_limiter!(U,basis,X,dx,type) # U: [n_vars, nodes, elements], X[nod
     return U
 end
 
-function maximum_velocity_DG(U_node, gamma) # gucke an jedem Knoten nach der größten Geschwindigkeit 
+function maximum_velocity_DG(U_node, gamma) # Check for the highest speed at each node 
     ρ, m, E = U_node[1], U_node[2], U_node[3]
     u = m / ρ
     p = (gamma - 1) * (E - 0.5 * ρ * u^2)
-    c = sqrt(gamma * max(1e-10, p) / max(1e-10, ρ)) # sicherstellen, dass keine Nullwerte kommen
+    c = sqrt(gamma * max(1e-10, p) / max(1e-10, ρ)) # ensure that no zero values ​​occur
     return abs(u) + c
 end
 
-# Haupt-Solver-Funktion
+# Main solver function
 function solve_dgsem(polydeg:: Integer, elements:: Integer, type, var_idx::Integer)
 
     # 1. SetUp
@@ -426,12 +426,12 @@ function solve_dgsem(polydeg:: Integer, elements:: Integer, type, var_idx::Integ
     history = []
     history_animation = []
     save_times = []
-    x_axis = vec(X) # x-Werte aus der Gittermatrix X entnehmen
-    #! falls komisch aussieht: sortperm mal probieren
+    x_axis = vec(X) # Extract x-values ​​from the grid matrix X
+    #! in case it looks weird: give sortperm a try
 
     ρ = vec(U0[1,:,:])
     m = vec(U0[2,:,:])
-    u = m ./ ρ # für die Geschwindigkeit
+    u = m ./ ρ # for the velocity
     p1_anfang = plot(x_axis, ρ, title="Dichte ρ", xlabel="x", ylabel="kg/m³")
     p2_anfang = plot(x_axis, m, title="Impuls m", xlabel="x", ylabel="kg/(m²s)")
     p3_anfang = plot(x_axis, vec(U0[3,:,:]), title="Energie E", xlabel="x", ylabel="J/m³")
@@ -440,82 +440,82 @@ function solve_dgsem(polydeg:: Integer, elements:: Integer, type, var_idx::Integ
     display(plot(p1_anfang, p2_anfang, p3_anfang, p4_anfang, layout=(4,1), plot_title = "Simulation n = $elements",size=(800, 1100)))
     savefig("plots_dgsem/$(type)_dgsem_anfangsbedingung_n_$elements.png")
 
-    #! manuelle Rechnung ohne ODEProblem Solver
+    #! Manual invoice without ODE problem solver
     U = copy(U0)
     t = 0.0
     cfl_parameter = 0.1
 
-    dU = zeros(size(U)) # dU initalisieren
-    nodes = polydeg + 1 # sagen, wie viele nodes es gibt
+    dU = zeros(size(U)) # dU initialize
+    nodes = polydeg + 1 # state how many nodes there are
 
     while t < t_end
         max_s = 0.0
-        # Wir prüfen alle Knoten in allen Elementen
+        # We check all nodes in all elements
         for l in 1:elements
             for i in 1:nodes
-                # Hilfsfunktion für Schallgeschwindigkeit
+                # Helper function for the speed of sound
                 s = maximum_velocity_DG(U[:, i, l], gamma)
                 max_s = max(max_s, s)
             end
         end
 
-        # 2. CFL-Bedingung/ durch 2*polydeg + 1 dividieren
+        # 2. CFL-condition/ divide of 2*polydeg + 1 
         dt = cfl_parameter * dx / ((2 * polydeg + 1) * max_s)
         
         if t + dt > t_end
             dt = t_end - t
         end
 
-        #! für Animation
+        #! for animation
         ######################################################################################
-        if t == 0.0 || (t % 0.01 < dt)  # Speichert ca. alle 0.01 Zeiteinheiten + den Startwert
+        if t == 0.0 || (t % 0.01 < dt)  # Saves approximately every 0.01 time units + the initial value
             current_ρ = copy(U[1,:,:])
             current_m = copy(U[2,:,:])
             current_E = copy(U[3,:,:])
             current_u = current_m ./ current_ρ
                 
-            # speicher aktuelle Arrays als Tuple ab
+            # Save current arrays as a tuple
             push!(history_animation, (current_ρ, current_m, current_E, current_u, t))
         end
         #####################################################################################
 
-        #! RKDG Method: S.196 Shu, für den zeitlichen Teil zuständig, nicht den räumlichen
-        # nutze rhs!, um das nächste U zu berechnen
-        parameters = (basis, M, D, dx, gamma, type) # Parameter Tupel definieren
+        #! RKDG Method: p. 196 Shu—responsible for the temporal component, not the spatial one
+        # Use the rhs! to calculate the next U
+        parameters = (basis, M, D, dx, gamma, type) # define parameter tupel
 
-        U_n = copy(U) # U_n ist U(0) für die RK-Stufen, U wird in jeder Stufe überschrieben
+        U_n = copy(U) # U_n represents U(0) for the RK stages; U is overwritten in each stage
 
-        # Stufe 1
+        # Stage 1
         rhs!(dU, U, parameters, t)
-        #U .+= dt .* dU# expliziter Euler-Schritt
+        #U .+= dt .* dU# explicit Euler
 
         
         U .= U_n + dt .* dU
-        #if type == "neumann"
-        apply_limiter!(U, basis, X, dx,type) # in jeder Zwischenstufe muss der Limiter angewandt werden
-        #end
+        if type == "neumann"
+            apply_limiter!(U, basis, X, dx,type) # The limiter must be applied at every intermediate stage
+        end
 
-        # Stufe 2
-        rhs!(dU, U, parameters, t + dt) # t übergeben eigentlich nicht wichtig bei uns, da autonomes Problem 
+        # Stage 2
+        rhs!(dU, U, parameters, t + dt) # Passing t isn't actually important in our case, as it's an autonomous problem 
         U .= 0.75 * U_n + 0.25 .* (U + dt .* dU)
-        #if type == "neumann"
-        apply_limiter!(U, basis, X, dx,type)
-        #end
+        if type == "neumann"
+            apply_limiter!(U, basis, X, dx,type)
+        end
 
-        # Stufe 3
+        # Stage 3
         rhs!(dU, U, parameters, t + 0.5 * dt)
         U .= (1/3) .* U_n  + (2/3) .* (U + dt .* dU)
-        #if type == "neumann"
-        apply_limiter!(U, basis, X, dx,type)
-        #end
-        # der einzelne RK-Schritt ist nach den drei Stufen vorbei
+        if type == "neumann"
+            apply_limiter!(U, basis, X, dx,type)
+        end
+        # The individual RK step is complete after the three stages
         
 
         t += dt
 
-        if t % 0.005 < dt  # Sparsames Speichern
-            # Wir kopieren den aktuellen Zustand der gewünschten Variable (var_idx)
-            # und klopfen ihn flach [nodes * elements]
+        if t % 0.005 < dt  # Efficient storage
+            # We copy the current state of the desired variable (var_idx)
+            # and flatten it [nodes * elements]
             push!(history, vec(copy(U[var_idx, :, :]))) 
             push!(save_times, t)
         end
@@ -525,21 +525,21 @@ function solve_dgsem(polydeg:: Integer, elements:: Integer, type, var_idx::Integ
     println("Erstelle Animation für n = $elements...")
 
     anim = @animate for step in history_animation
-        # Entpacken der Daten für den aktuellen Zeitschritt
+        # Unpacking the data for the current time step
         _ρ, _m, _E, _u, _t = step
             
-        # Formatierung der aktuellen Zeit für den Titel (2 Nachkommastellen)
+        # Formatting the current time for the title (2 decimal places)
         t_str = @sprintf("%.3f", _t) 
             
-        # Einzelplots erstellen (Wichtig: ylims fixieren, damit die Achsen nicht springen!)
-        # Hinweis: Ersetze y_min und y_max mit sinnvollen Werten deiner Anfangsbedingung,
-        # falls die Achsen im GIF zu sehr "wobbeln".
+        # Create individual plots (Important: fix the y-limits so the axes don't jump!)
+        # Note: Replace y_min and y_max with meaningful values ​​from your initial condition
+        # in case the axes in the GIF "wobble" too much.
         p1_anim = plot(x_axis, vec(_ρ), title="Density ρ", xlabel="x", ylabel="kg/m³", legend=false)
         p2_anim = plot(x_axis, vec(_m), title="Impuls m", xlabel="x", ylabel="kg/(m²s)", legend=false)
         p3_anim = plot(x_axis, vec(_E), title="Energy E", xlabel="x", ylabel="J/m³", legend=false)
         p4_anim = plot(x_axis, vec(_u), title="Velocity u", xlabel="x", ylabel="m/s", color=:red, legend=false)
             
-        # Zusammenfügen im 4x1 Layout (analog zu deinen Endbildern)
+        # Assemble in a 4x1 layout (similar to your final images)
         plot(p1_anim, p2_anim, p3_anim, p4_anim, 
             layout=(4,1), 
             plot_title="Simulation n = $elements |  Time t = $t_str s",
@@ -547,24 +547,24 @@ function solve_dgsem(polydeg:: Integer, elements:: Integer, type, var_idx::Integ
             size=(800, 1000))
     end
 
-    gif(anim, "plots_dgsem/$(type)_simulation_n_$(elements).gif", fps=8) # als GIF abspeichern
+    gif(anim, "plots_dgsem/$(type)_simulation_n_$(elements).gif", fps=8) # Save as GIF
     ##################################################################################
 
-    return U, X, dx, history, save_times, basis.weights # U ist hier der Endzustand
+    return U, X, dx, history, save_times, basis.weights # U is the final state here.
     
     #######################################################################################################
-    #! nur im Falle, dass man das Paket ODE Solver nutzen will 
-    # Parameter-Tupel für die ODEProblem
+    #! only in case one wants to use the ODE Solver package
+    # Parameter tuple for the ODEProblem
     #=parameters = (basis, M, D, dx, gamma, type)
 
-    # 3. ODE-Problem aufstellen
+    # 3. Formulate the ODE problem
     tspan = (0.0, t_end)
     prob = ODEProblem(rhs!, U0, tspan, parameters)
 
-    # 4. Lösen der ODE
-    # Verwendung eines robusten expliziten Runge-Kutta-Verfahrens (RK4)
-    # Die Schrittweite dt=0.01 ist eine Vermutung und muss für tatsächliche Stabilitätstests 
-    # über die CFL-Bedingung bestimmt werden.
+    # 4. Solving the ODE
+    # Use of a robust explicit Runge-Kutta method (RK4)
+    # The step size dt=0.01 is an estimate and must be verified for actual stability tests
+    # by the CFL condition.
     sol = solve(prob, RK4(),dt=0.01,saveat = 0.05)=#
     #######################################################################################################
 
@@ -572,13 +572,13 @@ function solve_dgsem(polydeg:: Integer, elements:: Integer, type, var_idx::Integ
 end
 
 function complete_simulation(type)
-    # n ist jetzt die Anzahl der ELEMENTE
-    # Wir fixieren p, um die Konvergenz über n zu sehen
+    # n is now the number of elements
+    # We fix p to observe convergence with respect to n
     ns = [2,4,8,16,32,64,128,256]
     polydeg = 2 
     nodes = polydeg + 1
     results = [] 
-    var_idx = 2 # 1 für ρ, 2 für m, 3 für E
+    var_idx = 2 # 1 for ρ, 2 for m, 3 for E
     var_names = ["Density_ρ", "Impuls_m", "Energy_E"]
     current_var_name = var_names[var_idx]
 
@@ -589,21 +589,21 @@ function complete_simulation(type)
     for n in ns
         U_end, X, dx, history, save_times, _ = solve_dgsem(polydeg, n, type, var_idx)
         
-        # 2. Daten extrahieren
-        # sol.u[end] ist ein 3D Array [Variable, Knoten, Element]
-        #U_end = sol.u[end] # nur beim ODE Solver verwenden wichtig 
+        # 2. Extract data
+        # sol.u[end] is a 3D array [Variable, nodes, element]
+        #U_end = sol.u[end] # Use only with the ODE solver
 
-        u_final = vec(U_end[var_idx, :, :]) # für den EOC und die mesh konvergenz
+        u_final = vec(U_end[var_idx, :, :]) # for the EOC and mesh convergence
         push!(results, u_final)
 
-        #! Plotten, flachklopfen, damit man plotten kann 
+        #! Plotting, flattening so you can plot
         x_flat = vec(X)
         push!(X_array, x_flat)
         perm = sortperm(x_flat)
         
         ρ = vec(U_end[1,:,:])
         m = vec(U_end[2,:,:])
-        u = m ./ ρ # für die Geschwindigkeit
+        u = m ./ ρ # for the velocity
         p1 = plot(x_flat[perm], ρ[perm], title="Density ρ",xlabel="x", ylabel="kg/m³")
         p2 = plot(x_flat[perm], m[perm], title="Impuls m",xlabel="x", ylabel="kg/(m²s)")
         p3 = plot(x_flat[perm], vec(U_end[3, :, :])[perm], title="Energy E", xlabel="x", ylabel="J/m³")
@@ -614,9 +614,9 @@ function complete_simulation(type)
         #! Heatmap
         x_axis_sorted = x_flat[perm]
 
-        # Die Daten in der History müssen entsprechend der x-Achse sortiert werden
-        # Falls du vec(U) in die history gepusht hast:
-        plot_data = reduce(hcat, history)'  # Matrix: [Zeit, Ort]
+        # The data in the history must be sorted according to the x-axis
+        # If you've pushed vec(U) to the history:
+        plot_data = reduce(hcat, history)'  # Matrix: [time, grid]
         plot_data_sorted = plot_data[:, perm]
 
         heatmap(x_axis_sorted, save_times, plot_data_sorted, 
@@ -625,14 +625,12 @@ function complete_simulation(type)
                 color=:magma)
         savefig("plots_dgsem/$(type)_dgsem_heatmap_$(current_var_name)_n_$(n)_.png")
     end
-
-    #! erstmal ohne EOC/Konvergenzstudio ausprobieren 
     
     # EOC:
     
     gb = GaussLegendre(polydeg)
-    Gauss_nodes = gb.nodes # polydeg + 1 Vektor
-    Gauss_weights = gb.weights # polydeg + 1 Vektor
+    Gauss_nodes = gb.nodes # polydeg + 1 vector
+    Gauss_weights = gb.weights # polydeg + 1 vector
 
     errors = Float64[]
 
@@ -698,7 +696,7 @@ function complete_simulation(type)
         push!(errors, sqrt(err))
     end
     
-    # EOC Berechnung bleibt jetzt gleich zum LLF-Fluss
+    # EOC calculation now remains consistent with the LLF flow
     eocs = []
     for i in 1:(length(errors)-1)
         push!(eocs, log2(errors[i] / errors[i+1]))
