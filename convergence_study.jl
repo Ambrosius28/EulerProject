@@ -240,25 +240,21 @@ function run_full_convergence_study(
     println()
     println("====================================================")
     println(title_base, "  (", mode_label, ")")
-    println("====================================================")
-
-    # Compute the reference solution ONCE per case (it doesn't depend on the
-    # ansatz method), and reuse it for all 3 methods below -- avoids solving
-    # the same n_gauss deterministic problems 3 times over.
-    U_ref = if convergence_mode == :reference
-        println("  -> building reference solution (n=$n, $(length(omega_eval)) Gauss-Legendre omega points)...")
-        reference_solution(testcase, par_ref)
-    else
-        nothing
-    end
+    println("====================================================")   
 
     methods = ["constant", "cubic", "polynomial"]
     results = Dict{String, Any}()
 
     for method in methods
         par.ansatz_space = method
+        
         result = 
             if convergence_mode == :reference
+            
+            println("  -> building reference solution (n=$n, $(length(omega_eval)) Gauss-Legendre omega points)...")
+            par_ref.ansatz_space = method
+            U_ref = reference_solution(testcase, par_ref)
+            
             convergence_study(testcase, par, omega_weights, U_ref;
                                component = component)
             elseif convergence_mode == :cauchy
@@ -349,16 +345,16 @@ parameters_ref = Parameters(
     n = parameters.n,
     M = 64,   # reference solution uses a much finer collocation
     nomega_fine = parameters.nomega_fine,
-    ansatz_space = "cubic",   # reference solution uses the most accurate ansatz
+    # ansatz_space = "cubic",   # reference solution uses the most accurate ansatz
 )
 
 cases = [
     ("ex_2_2_i",   exercise_2_2_i),
-    ("ex_2_2_ii",  exercise_2_2_ii),
-    ("ex_2_3_i",   exercise_2_3_i),
-    ("ex_2_3_ii",  exercise_2_3_ii),
-    ("ex_2_4_i",   exercise_2_4_i),
-    ("ex_2_4_ii",  exercise_2_4_ii),
+    # ("ex_2_2_ii",  exercise_2_2_ii),
+    # ("ex_2_3_i",   exercise_2_3_i),
+    # ("ex_2_3_ii",  exercise_2_3_ii),
+    # ("ex_2_4_i",   exercise_2_4_i),
+    # ("ex_2_4_ii",  exercise_2_4_ii),
 ]
 
 all_results = Dict{String, Any}()

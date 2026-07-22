@@ -381,12 +381,7 @@ function run_full_convergence_study(
     # Compute the reference solution ONCE per case (it doesn't depend on the
     # ansatz method), and reuse it for all 3 methods below -- avoids solving
     # the same n_gauss deterministic problems 3 times over.
-    U_ref, basis = if convergence_mode == :reference
-        println("  -> building reference solution (n=$n, $(length(omega_eval)) Gauss-Legendre omega points)...")
-        reference_solution(testcase, n, omega_eval; cfl_parameter = cfl_parameter)
-    else
-        U_ref, basis = nothing, nothing
-    end
+    
 
     label_1, label_2 = if error_mode == :mean_of_solution
         ("L1-Error (Mean)", "L2-Error (Mean)")
@@ -402,7 +397,11 @@ function run_full_convergence_study(
     results = Dict{String, Any}()
 
     for method in methods
-        result = if convergence_mode == :reference
+        result = 
+        if convergence_mode == :reference
+            println("  -> building reference solution (n=$n, $(length(omega_eval)) Gauss-Legendre omega points)...")
+            U_ref, basis = reference_solution(testcase, n, omega_eval; cfl_parameter = cfl_parameter, ref_method = method)
+
             convergence_study(error_mode,testcase, n, M_values, method, omega_eval, omega_weights, U_ref;
                                component = component, cfl_parameter = cfl_parameter)
         elseif convergence_mode == :cauchy
