@@ -41,15 +41,6 @@
 # there is a CFL for L2 stability and TV (Total Variation) stability. since it is much weaker for TV,
 # you can simply consult Table 2.2 on p.191 for the CFL number
 
-#################################################################################################
-#! stochastic variable part
-# different variables are now random variables, they depend on the value ω, which can take values between 0 and 1.
-# an outer loop is created around the code, where the individual collocation points are processed.
-# the individual solutions are then welded together into one solution by piecewise constant functions, cubic splines and polynomials
-# for splines it is best to take equally spaced values of ω; for polynomials use GLL nodes.
-# once the initial values should depend on ω, then the adiabatic coefficient γ
-# for the adiabatic coefficient: every value of ω between 0 and 1 is equally likely 
-
 using LinearAlgebra, Printf, Statistics, BenchmarkTools, LaTeXStrings, Polynomials, PrettyTables
 #plotlyjs()  #
 using SparseArrays, SuiteSparse,ToeplitzMatrices
@@ -60,10 +51,10 @@ using Plots; pythonplot()
 using Trixi
 
 # The flux are the parts of the PDE that are differentiated with respect to the spatial variable
-function flux(Q_vec::Vector,gamma) # this function always evaluates the flux in the respective cell
-    ρ = Q_vec[1]
-    m = Q_vec[2] 
-    E = Q_vec[3]
+function flux(U_vec::Vector,gamma) # this function always evaluates the flux in the respective cell
+    ρ = U_vec[1]
+    m = U_vec[2] 
+    E = U_vec[3]
 
     u = m / ρ
     p = (gamma - 1) * ( E - 0.5 * ρ * u^2)
@@ -99,18 +90,18 @@ function set_up_mesh(basis, elements:: Integer, n_vars:: Integer) # n_vars: numb
     return X, dx
 end 
 
-function maximum_velocity(gamma, Q_left::Vector, Q_right::Vector) # velocity for the LLF flux
+function maximum_velocity(gamma, U_left::Vector, U_right::Vector) # velocity for the LLF flux
     eps_safe = 1e-12  # important for the square roots and u to avoid an error
-    ρ_left = Q_left[1]
-    m_left = Q_left[2] 
-    E_left = Q_left[3]
+    ρ_left = U_left[1]
+    m_left = U_left[2] 
+    E_left = U_left[3]
 
     u_left = m_left / max(eps_safe,ρ_left)
     p_left = (gamma - 1) * ( E_left - 0.5 * ρ_left * u_left^2)
 
-    ρ_right = Q_right[1]
-    m_right = Q_right[2] 
-    E_right = Q_right[3]
+    ρ_right = U_right[1]
+    m_right = U_right[2] 
+    E_right = U_right[3]
 
     u_right = m_right / ρ_right
     p_right = (gamma - 1) * ( E_right - 0.5 * ρ_right * u_right^2)
@@ -123,33 +114,33 @@ function maximum_velocity(gamma, Q_left::Vector, Q_right::Vector) # velocity for
 end
 
 # LLF flux is: 𝑓_num(𝑢−, 𝑢+) = 0.5 * (𝑓(𝑢−) + 𝑓(𝑢+)) − 0.5 * 𝜆 * (𝑢+ − 𝑢−)
-function flux_llf(Q_left, Q_right, gamma)
-    flux_left = flux(Q_left, gamma)
-    flux_right = flux(Q_right, gamma)
-    s = maximum_velocity(gamma, Q_left, Q_right)
+function flux_llf(U_left, U_right, gamma)
+    flux_left = flux(U_left, gamma)
+    flux_right = flux(U_right, gamma)
+    s = maximum_velocity(gamma, U_left, U_right)
 
-    return 0.5 * (flux_left + flux_right) - 0.5 * s * (Q_right - Q_left)
+    return 0.5 * (flux_left + flux_right) - 0.5 * s * (U_right - U_left)
 end
 
-function initialization(X, type) # for the initial condition
+function initialization(X, type) # for the initial condition 
     n_vars = 3
     L = 1.0
     nodes, elements = size(X)
-    Q = zeros(n_vars, nodes, elements) # initialization where the solutions of the components are written
+    U = zeros(n_vars, nodes, elements) # initialization where the solutions of the components are written
     t_end = 0.0 #! scope variables, Julia complains if you declare variables inside loops
     gamma = 0.0
 
     # loop over each element and each node
     for l in 1:elements
         for i in 1:nodes
-            x = X[i, l] # use X for initialization, the node position points are stored there
+            x = X[i, l] # use X for initialization, the node position points are stored theref
 
             if type == "periodic"
                 t_end = 0.5
                 gamma = 1.2
                 u = 1.0
                 p = 10.0
-                ρ = 1.0 + exp(-20 * (x - L/2)^2)
+                ρ = 1.0 + exp(-80 * (x - L/2)^2)
             
             elseif type == "neumann"
                 t_end = 0.2
@@ -168,26 +159,26 @@ function initialization(X, type) # for the initial condition
                 ρ, u, p = 1.0, 0.5, 1.0
             end
 
-            Q[1,i,l] =  ρ
-            Q[2,i,l] =  ρ * u        
-            Q[3,i,l] = p / (gamma-1) + 0.5 * ρ * u^2
+            U[1,i,l] =  ρ
+            U[2,i,l] =  ρ * u        
+            U[3,i,l] = p / (gamma-1) + 0.5 * ρ * u^2
         end
     end
-    return Q, t_end, gamma
+    return U, t_end, gamma
 end
 
 # Right-hand side of the ODE (method of lines)
 # In-place function: dU/dt = rhs!(dU,U,p,t)
-function rhs!(dQ,Q,p,t)
-    dQ .= 0.0 # important: set the time derivative to zero before each pass
+function rhs!(dU,U,p,t)
+    dU .= 0.0 # important: set the time derivative to zero before each pass
 
     # unpack parameters
     basis, M, D, dx, gamma, type = p
     weights = basis.weights
-    inv_D_T_M = D' * M # for the computation of the volume term
+    inv_D_T_M = D' * M # for the computation of the volume term 
 
     # dimensions
-    n_vars, nodes, elements = size(Q) # size returns the dimensions of a matrix
+    n_vars, nodes, elements = size(U) # size returns the dimensions of a matrix
 
     # temporary storage for the numerical fluxes at the boundaries
     F_num = zeros(n_vars, 2, elements)
@@ -195,44 +186,44 @@ function rhs!(dQ,Q,p,t)
     # 1. compute the numerical fluxes F_num, we need them at the boundaries of the elements (and for the LLF flux)
     for l in 1:elements
         #! flux at the right boundary of element l (interface l -> l+1)
-        Q_left = Q[:,nodes,l]
+        U_left = U[:,nodes,l]
 
         # determine Q_right (left side of l+1)
         if l < elements
             # internal interface: l -> l+1
-            Q_right = Q[:,1, l+1]
+            U_right = U[:,1, l+1]
         else
             if type == "periodic"
                 # periodic boundary condition: last element (l=N_e) -> first element (l=1)
-                Q_right = Q[:,1, 1]
-            elseif type == "neumann" # Q_left and Q_right are equal here (gas flows on without resistance/no wall)
-                Q_right = Q[:,nodes, l]
+                U_right = U[:,1, 1]
+            elseif type == "neumann" # U_left and U_right are equal here (gas flows on without resistance/no wall)
+                U_right = U[:,nodes, l]
             elseif type == "test"
-                Q_right = Q[:,nodes, l]
+                U_right = U[:,nodes, l]
             end
         end
         # store the flux at the right boundary of l (F_num[2,l])
-        F_num[:,2,l] = flux_llf(Q_left, Q_right, gamma) # two: right door of the element
+        F_num[:,2,l] = flux_llf(U_left, U_right, gamma) # two: right door of the element
 
         #! flux at the left boundary of element l (interface l-1 -> l)
-        Q_right = Q[:,1, l] # Q_right (left side of l)
+        U_right = U[:,1, l] # U_right (linke Seite von l)
 
-        # determine Q_left (right side of l-1)
+        # determine U_left (right side of l-1)
         if l > 1
             # internal interface: l-1 -> l
-            Q_left = Q[:,nodes, l-1]
+            U_left = U[:,nodes, l-1]
         else
             if type == "periodic"
                 # periodic boundary condition: first element (l=1) -> last element (1=N_e)
-                Q_left = Q[:,nodes, elements]
+                U_left = U[:,nodes, elements]
             elseif type == "neumann"
-                Q_left = Q[:,1,1]
+                U_left = U[:,1,1]
             elseif type == "test"
-                Q_left = Q[:,1,1]
+                U_left = U[:,1,1]
             end
         end
         # store the flux at the left boundary of l (F_num[1, l])
-        F_num[:,1,l] = flux_llf(Q_left, Q_right, gamma)
+        F_num[:,1,l] = flux_llf(U_left, U_right, gamma)
     end
 
     # 2. compute the discrete time derivative term dU
@@ -240,86 +231,235 @@ function rhs!(dQ,Q,p,t)
         # compute the physical flux f(U) at all nodes of the element, #! nodal basis
         flux_val = zeros(n_vars, nodes)
         for i in 1:nodes
-            flux_val[:, i] = flux(Q[:, i, l], gamma)
+            flux_val[:, i] = flux(U[:, i, l], gamma)
         end
 
         for v in 1:n_vars # formula S.78 in the notes, dQ is changed in-place directly
             # volume term: M⁻¹ * Dᵀ * M * f(U)
-            # note: inv(M) is 1/weights
+            # inv(M) is 1/weights
             vol = (1.0 ./ weights) .* (inv_D_T_M * flux_val[v, :])
             
-            # surface term: M⁻¹ * Rᵀ * B * F_num
-            # only at the first and last node
+            # Surface Term: M⁻¹ * Rᵀ * B * F_num
+            # Only on first and last node
             surf_1 = (1.0 / weights[1]) * F_num[v, 1, l] # 1/w_1 * f_num_left
             surf_p = (1.0 / weights[nodes]) * F_num[v, 2, l] # - 1/w_p * f_num_right
 
             # assemble for each variable v
             # fill all nodes of element l with the result from the volume term
-            dQ[v, :, l] .= (2.0 / dx) .* vol
-            # update for the boundary nodes now
-            dQ[v, 1, l]     += (2.0 / dx) * surf_1
-            dQ[v, nodes, l] -= (2.0 / dx) * surf_p
+            dU[v, :, l] .= (2.0 / dx) .* vol
+            # update for the boundary nodes now 
+            dU[v, 1, l]     += (2.0 / dx) * surf_1
+            dU[v, nodes, l] -= (2.0 / dx) * surf_p
         end
     end
 
-    return dQ
+    return dU
 end
 
-function maximum_velocity_DG(Q_node, gamma) # look at every node for the largest velocity
-    ρ, m, E = Q_node[1], Q_node[2], Q_node[3]
+function minmod(a1::Number,a2::Number,a3::Number)
+    if sign(a1) == sign(a2) && sign(a1) == sign(a3)
+        return sign(a1) * min(abs(a1), abs(a2), abs(a3))
+    else
+        return 0.0
+    end
+end
+
+function minmod_corrected(a1::Number,a2::Number,a3::Number,M,dx)
+    if abs(a1) <= M * dx^2
+        return a1
+    else
+        return minmod(a1,a2,a3)
+    end
+end
+
+function apply_limiter!(U,basis,X,dx,type) # U: [n_vars, nodes, elements], X[nodes, elements]
+    dimension = size(U)
+    elements = dimension[3] # how many elements
+    nodes = dimension[2] # how many nodes per element
+    sum_weights = sum(basis.weights)
+    half_length = dx / 2.0
+    tol = 1e-5
+    M = 0.6 # heuristaclly value for the corrected minmod
+
+    mean_array = zeros(3, elements)
+
+    # mean for each cell
+    # $$\bar{U}_l = 1\length(I_l) ∫_{I_l} U(x) dx = 1\length(I_l) ∑_{k=0}_{n} Uk * wk
+    for l in 1:elements  
+        mean_array[1,l] = sum(basis.weights .* U[1,:,l]) / sum_weights
+        mean_array[2,l] = sum(basis.weights .* U[2,:,l]) / sum_weights
+        mean_array[3,l] = sum(basis.weights .* U[3,:,l]) / sum_weights
+    end
+
+    for l in 1:elements
+        if l == 1
+            ρ_mean_right = mean_array[1,l+1]; m_mean_right = mean_array[2,l+1]; E_mean_right = mean_array[3,l+1]
+            if type == "periodic"
+                ρ_mean_left = mean_array[1,elements]; m_mean_left = mean_array[2,elements]; E_mean_left = mean_array[3,elements]
+            elseif type == "neumann"
+                ρ_mean_left = mean_array[1,1]; m_mean_left = mean_array[2,1]; E_mean_left = mean_array[3,1]
+            end
+        elseif l == elements
+            ρ_mean_left = mean_array[1,l-1]; m_mean_left = mean_array[2,l-1]; E_mean_left = mean_array[3,l-1]
+            if type == "periodic"
+               ρ_mean_right = mean_array[1,1]; m_mean_right = mean_array[2,1]; E_mean_right = mean_array[3,1]
+            elseif type == "neumann"
+                ρ_mean_right = mean_array[1,elements]; m_mean_right = mean_array[2,elements]; E_mean_right = mean_array[3,elements]
+            end
+        else
+            ρ_mean_left = mean_array[1,l-1]; m_mean_left = mean_array[2,l-1]; E_mean_left = mean_array[3,l-1]
+            ρ_mean_right = mean_array[1,l+1]; m_mean_right = mean_array[2,l+1]; E_mean_right = mean_array[3,l+1]
+        end
+
+        ρ_mean = mean_array[1,l]
+        m_mean = mean_array[2,l]
+        E_mean = mean_array[3,l]
+
+        # in element value of the right boundary: v_{j+1/2}^{-}
+        ρ_right_value = U[1,nodes,l]
+        m_right_value = U[2,nodes,l]
+        E_right_value = U[3,nodes,l]
+
+        # in element value of the left boundary: v_{j-1/2}^{+}
+        ρ_left_value = U[1,1,l]
+        m_left_value = U[2,1,l]
+        E_left_value = U[3,1,l]
+
+        # for each of the three variables u_{j+1/2}^{-} and u_{j-1/2}^{+}, for the formulas (2.10) and (2.11)
+        a1_right = ρ_right_value - ρ_mean
+        a1_left = ρ_mean - ρ_left_value
+        a2 = ρ_mean - ρ_mean_left
+        a3 = ρ_mean_right - ρ_mean
+        #U_ρ_right_value = ρ_mean + minmod(a1_right, a2, a3)
+        #U_ρ_left_value = ρ_mean - minmod(a1_left, a2, a3)
+        U_ρ_right_value = ρ_mean + minmod_corrected(a1_right, a2, a3,M,dx) # formula 2.10
+        U_ρ_left_value = ρ_mean - minmod_corrected(a1_left, a2, a3,M,dx) # formula 2.11
+
+
+        a1_right = m_right_value - m_mean
+        a1_left = m_mean - m_left_value
+        a2 = m_mean - m_mean_left
+        a3 = m_mean_right - m_mean
+        #U_m_right_value = m_mean + minmod(a1_right, a2, a3)
+        #U_m_left_value = m_mean - minmod(a1_left, a2, a3)
+        U_m_right_value = m_mean + minmod_corrected(a1_right, a2, a3,M,dx)
+        U_m_left_value = m_mean - minmod_corrected(a1_left, a2, a3,M,dx)
+
+        a1_right = E_right_value - E_mean
+        a1_left = E_mean - E_left_value
+        a2 = E_mean - E_mean_left
+        a3 = E_mean_right - E_mean
+        #U_E_right_value = E_mean + minmod(a1_right, a2, a3)
+        #U_E_left_value = E_mean - minmod(a1_left, a2, a3)
+        U_E_right_value = E_mean + minmod_corrected(a1_right, a2, a3,M,dx)
+        U_E_left_value = E_mean - minmod_corrected(a1_left, a2, a3,M,dx)
+
+        x_center_l = sum(X[:,l]) / nodes # Gauss-Legendre quadrature nodes are symmetric around the midpoint
+
+        # minimize the squared error between U and L:
+        # F(a, b) = ∫{-1}^{1} (U(ξ) - (a + bξ))^2 
+        # differentiate the expression with respect to b and set it equal to zero
+        # term  ∫_{-1}^{1} ξ dξ cancels out due to orthogonality
+        # change after b:
+        # b = ∫_{-1}^{1} U(ξ)*ξ dξ/∫_{-1}^{1} ξ^2 dξ, in L^2-Scalar product form:
+        # ⟨ U, ξ ⟩ / ⟨ ξ, ξ ⟩, use Gauss-Lobatto quadrature for integration
+        # Numerator is ≈ ∑_{k=1}^{N} weights_k ⋅ U_k ⋅ nodes_k 
+        # Denominator it  ≈ ∑_{k=1}^{N} weights_k ⋅ (nodes_k)^2 (norm_factor in code)
+        basis_nodes = basis.nodes
+        norm_factor = sum(basis.weights .* basis_nodes.^2)
+        
+        # condition (ii), if u_{j+1/2}^{-} = v_{j+1/2}^{-} and u_{j-1/2}^{+} = v_{j-1/2}^{+}
+        # for ρ
+        if (abs(U_ρ_right_value - ρ_right_value) > tol || abs(U_ρ_left_value - ρ_left_value) > tol)
+           # Calculation of the L2 projection slope for the density (variable 1)
+           v_x_rho = sum(basis.weights .* U[1,:,l] .* basis_nodes) / norm_factor
+           v_x_rho *= (1.0 / half_length) # Scaling factor to map back to real space
+           # And now apply the limiter to this physically correct slope:
+           slope = minmod(v_x_rho, (ρ_mean_right - ρ_mean) / half_length, (ρ_mean - ρ_mean_left) / half_length)
+           #local_slope = (U[1,nodes,l] - U[1,1,l]) / (X[nodes,l] - X[1,l])
+           #slope = minmod(local_slope, (ρ_mean_right - ρ_mean) / half_length, (ρ_mean - ρ_mean_left) / half_length)
+           # new linear polynomial is generated
+           U[1,:,l] = ρ_mean .+ (X[:,l] .- x_center_l) .* slope
+        end
+
+        # for m
+        if (abs(U_m_right_value - m_right_value) > tol || abs(U_m_left_value - m_left_value) > tol)
+           v_x_m = sum(basis.weights .* U[2,:,l] .* basis_nodes) / norm_factor
+           v_x_m *= (1.0 / half_length)
+           slope = minmod(v_x_m, (m_mean_right - m_mean) / half_length, (m_mean - m_mean_left) / half_length)
+           #local_slope = (U[2,nodes,l] - U[2,1,l]) / (X[nodes,l] - X[1,l])
+           #slope = minmod(local_slope, (m_mean_right - m_mean) / half_length, (m_mean - m_mean_left) / half_length)
+           U[2,:,l] = m_mean .+ (X[:,l] .- x_center_l) .* slope
+        end
+
+        # for E
+        if (abs(U_E_right_value - E_right_value) > tol || abs(U_E_left_value - E_left_value) > tol)
+           v_x_E = sum(basis.weights .* U[3,:,l] .* basis_nodes) / norm_factor
+           v_x_E *= (1.0 / half_length)
+           slope = minmod(v_x_E, (E_mean_right - E_mean) / half_length, (E_mean - E_mean_left) / half_length)
+           #local_slope = (U[3,nodes,l] - U[3,1,l]) / (X[nodes,l] - X[1,l])
+           #slope = minmod(local_slope, (E_mean_right - E_mean) / half_length, (E_mean - E_mean_left) / half_length)
+           U[3,:,l] = E_mean .+ (X[:,l] .- x_center_l) .* slope
+        end
+    end
+    return U
+end
+
+function maximum_velocity_DG(U_node, gamma) # Check for the highest speed at each node 
+    ρ, m, E = U_node[1], U_node[2], U_node[3]
     u = m / ρ
     p = (gamma - 1) * (E - 0.5 * ρ * u^2)
-    c = sqrt(gamma * max(1e-10, p) / max(1e-10, ρ)) # ensure that no zero values occur
+    c = sqrt(gamma * max(1e-10, p) / max(1e-10, ρ)) # ensure that no zero values ​​occur
     return abs(u) + c
 end
 
-# Haupt-Solver-Funktion
+# Main solver function
 function solve_dgsem(polydeg:: Integer, elements:: Integer, type, var_idx::Integer)
 
-    # 1. setup
+    # 1. SetUp
     n_vars = 3
     basis, M, D = create_basis(polydeg)
     X, dx = set_up_mesh(basis, elements, n_vars)
 
-    # 2. initialization
-    Q0, t_end, gamma = initialization(X, type)
+    # 2. Initalisierung
+    U0, t_end, gamma = initialization(X, type)
     history = []
     history_animation = []
     save_times = []
-    x_axis = vec(X) # extract x values from the grid matrix X
-    #! if it looks strange: try sortperm
+    x_axis = vec(X) # Extract x-values ​​from the grid matrix X
+    #! in case it looks weird: give sortperm a try
 
-    ρ = vec(Q0[1,:,:])
-    m = vec(Q0[2,:,:])
+    ρ = vec(U0[1,:,:])
+    m = vec(U0[2,:,:])
     u = m ./ ρ # for the velocity
-    p1_anfang = plot(x_axis, ρ, title="Density ρ", xlabel="x", ylabel="kg/m³")
-    p2_anfang = plot(x_axis, m, title="Momentum m", xlabel="x", ylabel="kg/(m²s)")
-    p3_anfang = plot(x_axis, vec(Q0[3,:,:]), title="Energy E", xlabel="x", ylabel="J/m³")
-    p4_anfang = plot(x_axis, u, title="Velocity u", xlabel="x", ylabel="m/s", color=:red)
+    p1_anfang = plot(x_axis, ρ, title="Dichte ρ", xlabel="x", ylabel="kg/m³")
+    p2_anfang = plot(x_axis, m, title="Impuls m", xlabel="x", ylabel="kg/(m²s)")
+    p3_anfang = plot(x_axis, vec(U0[3,:,:]), title="Energie E", xlabel="x", ylabel="J/m³")
+    p4_anfang = plot(x_axis, u, title="Geschwindigkeit u", xlabel="x", ylabel="m/s", color=:red)
 
     display(plot(p1_anfang, p2_anfang, p3_anfang, p4_anfang, layout=(4,1), plot_title = "Simulation n = $elements",size=(800, 1100)))
     savefig("plots_dgsem/$(type)_dgsem_anfangsbedingung_n_$elements.png")
 
-    #! manual computation without ODEProblem solver
-    Q = copy(Q0)
+    #! Manual invoice without ODE problem solver
+    U = copy(U0)
     t = 0.0
     cfl_parameter = 0.1
 
-    dQ = zeros(size(Q)) # initialize dQ
-    nodes = polydeg + 1 # indicate how many nodes there are
+    dU = zeros(size(U)) # dU initialize
+    nodes = polydeg + 1 # state how many nodes there are
 
     while t < t_end
         max_s = 0.0
-        # we check all nodes in all elements
+        # We check all nodes in all elements
         for l in 1:elements
             for i in 1:nodes
-                # helper function for sound speed
-                s = maximum_velocity_DG(Q[:, i, l], gamma)
+                # Helper function for the speed of sound
+                s = maximum_velocity_DG(U[:, i, l], gamma)
                 max_s = max(max_s, s)
             end
         end
 
-        # 2. CFL condition / divide by 2*polydeg + 1
+        # 2. CFL-condition/ divide of 2*polydeg + 1 
         dt = cfl_parameter * dx / ((2 * polydeg + 1) * max_s)
         
         if t + dt > t_end
@@ -328,52 +468,78 @@ function solve_dgsem(polydeg:: Integer, elements:: Integer, type, var_idx::Integ
 
         #! for animation
         ######################################################################################
-        if t == 0.0 || (t % 0.01 < dt)  # saves approximately every 0.01 time units + the initial value
-            current_ρ = copy(Q[1,:,:])
-            current_m = copy(Q[2,:,:])
-            current_E = copy(Q[3,:,:])
+        if t == 0.0 || (t % 0.01 < dt)  # Saves approximately every 0.01 time units + the initial value
+            current_ρ = copy(U[1,:,:])
+            current_m = copy(U[2,:,:])
+            current_E = copy(U[3,:,:])
             current_u = current_m ./ current_ρ
                 
-            # save current arrays as a tuple
+            # Save current arrays as a tuple
             push!(history_animation, (current_ρ, current_m, current_E, current_u, t))
         end
+        #####################################################################################
 
-        # use rhs! to compute the next Q
-        parameters = (basis, M, D, dx, gamma, type) # define parameter tuple
-        rhs!(dQ, Q, parameters, t)
+        #! RKDG Method: p. 196 Shu—responsible for the temporal component, not the spatial one
+        # Use the rhs! to calculate the next U
+        parameters = (basis, M, D, dx, gamma, type) # define parameter tupel
+
+        U_n = copy(U) # U_n represents U(0) for the RK stages; U is overwritten in each stage
+
+        # Stage 1
+        rhs!(dU, U, parameters, t)
+        #U .+= dt .* dU# explicit Euler
+
         
-        # explicit Euler update: Q_new = Q_old + dt * dQ/dt
-        Q .+= dt .* dQ
+        U .= U_n + dt .* dU
+        if type == "neumann"
+            apply_limiter!(U, basis, X, dx,type) # The limiter must be applied at every intermediate stage
+        end
+
+        # Stage 2
+        rhs!(dU, U, parameters, t + dt) # Passing t isn't actually important in our case, as it's an autonomous problem 
+        U .= 0.75 * U_n + 0.25 .* (U + dt .* dU)
+        if type == "neumann"
+            apply_limiter!(U, basis, X, dx,type)
+        end
+
+        # Stage 3
+        rhs!(dU, U, parameters, t + 0.5 * dt)
+        U .= (1/3) .* U_n  + (2/3) .* (U + dt .* dU)
+        if type == "neumann"
+            apply_limiter!(U, basis, X, dx,type)
+        end
+        # The individual RK step is complete after the three stages
+        
 
         t += dt
 
-        if t % 0.005 < dt  # sparse saving
-            # we copy the current state of the desired variable (var_idx)
+        if t % 0.005 < dt  # Efficient storage
+            # We copy the current state of the desired variable (var_idx)
             # and flatten it [nodes * elements]
-            push!(history, vec(copy(Q[var_idx, :, :]))) 
+            push!(history, vec(copy(U[var_idx, :, :]))) 
             push!(save_times, t)
         end
     end
     ###############################################################################
-    # animation
-    println("Creating animation for n = $elements...")
+    # Animation
+    println("Erstelle Animation für n = $elements...")
 
     anim = @animate for step in history_animation
-        # unpack the data for the current time step
+        # Unpacking the data for the current time step
         _ρ, _m, _E, _u, _t = step
             
-        # format the current time for the title (2 decimal places)
+        # Formatting the current time for the title (2 decimal places)
         t_str = @sprintf("%.3f", _t) 
             
-        # create individual plots (important: fix ylims so the axes do not jump!)
-        # note: replace y_min and y_max with sensible values for your initial condition
-        # if the axes wobble too much in the GIF.
+        # Create individual plots (Important: fix the y-limits so the axes don't jump!)
+        # Note: Replace y_min and y_max with meaningful values ​​from your initial condition
+        # in case the axes in the GIF "wobble" too much.
         p1_anim = plot(x_axis, vec(_ρ), title="Density ρ", xlabel="x", ylabel="kg/m³", legend=false)
-        p2_anim = plot(x_axis, vec(_m), title="Momentum m", xlabel="x", ylabel="kg/(m²s)", legend=false)
+        p2_anim = plot(x_axis, vec(_m), title="Impuls m", xlabel="x", ylabel="kg/(m²s)", legend=false)
         p3_anim = plot(x_axis, vec(_E), title="Energy E", xlabel="x", ylabel="J/m³", legend=false)
         p4_anim = plot(x_axis, vec(_u), title="Velocity u", xlabel="x", ylabel="m/s", color=:red, legend=false)
             
-        # combine in a 4x1 layout (analogous to your final images)
+        # Assemble in a 4x1 layout (similar to your final images)
         plot(p1_anim, p2_anim, p3_anim, p4_anim, 
             layout=(4,1), 
             plot_title="Simulation n = $elements |  Time t = $t_str s",
@@ -381,24 +547,24 @@ function solve_dgsem(polydeg:: Integer, elements:: Integer, type, var_idx::Integ
             size=(800, 1000))
     end
 
-    gif(anim, "plots_dgsem/$(type)_simulation_n_$(elements).gif", fps=8) # save as GIF
+    gif(anim, "plots_dgsem/$(type)_simulation_n_$(elements).gif", fps=8) # Save as GIF
     ##################################################################################
 
-    return Q, X, dx, history, save_times # Q is the final state here
+    return U, X, dx, history, save_times, basis.weights # U is the final state here.
     
     #######################################################################################################
-    #! only in case you want to use the ODE solver package 
-    # parameter tuple for the ODEProblem
+    #! only in case one wants to use the ODE Solver package
+    # Parameter tuple for the ODEProblem
     #=parameters = (basis, M, D, dx, gamma, type)
 
-    # 3. set up the ODE problem
+    # 3. Formulate the ODE problem
     tspan = (0.0, t_end)
-    prob = ODEProblem(rhs!, Q0, tspan, parameters)
+    prob = ODEProblem(rhs!, U0, tspan, parameters)
 
-    # 4. solve the ODE
-    # use a robust explicit Runge-Kutta method (RK4)
-    # the step size dt=0.01 is a guess and must be determined for actual stability tests
-    # based on the CFL condition.
+    # 4. Solving the ODE
+    # Use of a robust explicit Runge-Kutta method (RK4)
+    # The step size dt=0.01 is an estimate and must be verified for actual stability tests
+    # by the CFL condition.
     sol = solve(prob, RK4(),dt=0.01,saveat = 0.05)=#
     #######################################################################################################
 
@@ -407,35 +573,40 @@ end
 
 function complete_simulation(type)
     # n is now the number of elements
-    # we fix p to observe convergence over n
-    ns = [2,4,8,16,32,64,128]
-    polydeg = 
+    # We fix p to observe convergence with respect to n
+    ns = [2,4,8,16,32,64,128,256]
+    polydeg = 2 
     nodes = polydeg + 1
     results = [] 
-    var_idx = 1 # 1 for ρ, 2 for m, 3 for E
+    var_idx = 2 # 1 for ρ, 2 for m, 3 for E
     var_names = ["Density_ρ", "Impuls_m", "Energy_E"]
     current_var_name = var_names[var_idx]
+
+    #_, _, _, _, _, weights = solve_dgsem(polydeg, ns[1], type, var_idx)
+
+    X_array = []
     
     for n in ns
-        Q_end, X, dx, history, save_times = solve_dgsem(polydeg, n, type, var_idx)
+        U_end, X, dx, history, save_times, _ = solve_dgsem(polydeg, n, type, var_idx)
         
-        # 2. extract data
-        # sol.u[end] is a 3D array [variable, node, element]
-        #Q_end = sol.u[end] # only important when using the ODE solver
+        # 2. Extract data
+        # sol.u[end] is a 3D array [Variable, nodes, element]
+        #U_end = sol.u[end] # Use only with the ODE solver
 
-        q_final = vec(Q_end[var_idx, :, :]) # for the EOC and mesh convergence
-        push!(results, q_final)
+        u_final = vec(U_end[var_idx, :, :]) # for the EOC and mesh convergence
+        push!(results, u_final)
 
-        #! plotting, flatten so it can be plotted
+        #! Plotting, flattening so you can plot
         x_flat = vec(X)
+        push!(X_array, x_flat)
         perm = sortperm(x_flat)
         
-        ρ = vec(Q_end[1,:,:])
-        m = vec(Q_end[2,:,:])
+        ρ = vec(U_end[1,:,:])
+        m = vec(U_end[2,:,:])
         u = m ./ ρ # for the velocity
         p1 = plot(x_flat[perm], ρ[perm], title="Density ρ",xlabel="x", ylabel="kg/m³")
         p2 = plot(x_flat[perm], m[perm], title="Impuls m",xlabel="x", ylabel="kg/(m²s)")
-        p3 = plot(x_flat[perm], vec(Q_end[3, :, :])[perm], title="Energy E", xlabel="x", ylabel="J/m³")
+        p3 = plot(x_flat[perm], vec(U_end[3, :, :])[perm], title="Energy E", xlabel="x", ylabel="J/m³")
         p4 = plot(x_flat[perm], u[perm], title="Velocity u", xlabel="x", ylabel="m/s", color=:red)
         display(plot(p1, p2, p3,p4, layout=(4,1), plot_title="DGSEM n=$n, p=$polydeg",size=(800, 1100)))
         savefig("plots_dgsem/$(type)_dgsem_euler_n_$n.png")
@@ -443,9 +614,9 @@ function complete_simulation(type)
         #! Heatmap
         x_axis_sorted = x_flat[perm]
 
-        # the data in history must be sorted according to the x-axis
-        # if you pushed vec(Q) into history:
-        plot_data = reduce(hcat, history)'  # matrix: [time, location]
+        # The data in the history must be sorted according to the x-axis
+        # If you've pushed vec(U) to the history:
+        plot_data = reduce(hcat, history)'  # Matrix: [time, grid]
         plot_data_sorted = plot_data[:, perm]
 
         heatmap(x_axis_sorted, save_times, plot_data_sorted, 
@@ -454,17 +625,12 @@ function complete_simulation(type)
                 color=:magma)
         savefig("plots_dgsem/$(type)_dgsem_heatmap_$(current_var_name)_n_$(n)_.png")
     end
-
-
-
-    #! first try without EOC/convergence study 
     
     # EOC:
-    #
     
     gb = GaussLegendre(polydeg)
-    Gauss_nodes = gb.nodes # polydeg + 1 Vektor
-    Gauss_weights = gb.weights # polydeg + 1 Vektor
+    Gauss_nodes = gb.nodes # polydeg + 1 vector
+    Gauss_weights = gb.weights # polydeg + 1 vector
 
     errors = Float64[]
 
@@ -474,12 +640,12 @@ function complete_simulation(type)
 
             h = 1.0 / ns[i+1] # Cell width on the true interval
 
-            q_fine = results[i+1][(e-1)*nodes + 1 : e*nodes] # Data of the current fine cell
-            #q_coarse = results[i][(e-1)*nodes + 1 : e*nodes] # Data of the current coarse cell
+            u_fine = results[i+1][(e-1)*nodes + 1 : e*nodes] # Data of the current fine cell
+            #u_coarse = results[i][(e-1)*nodes + 1 : e*nodes] # Data of the current coarse cell
 
             nodes_fine = X_array[i+1][(e-1)*nodes + 1 : e*nodes] # nodes of the current fine cell
 
-            q_fine_gauss = interpolate(Gauss_nodes, q_fine, LobattoLegendre(polydeg)) # vector with polydeg + 1 elements
+            u_fine_gauss = interpolate(Gauss_nodes, u_fine, LobattoLegendre(polydeg)) # vector with polydeg + 1 elements
 
             # which coarse cell has the fine cell?
             center_fine = sum(nodes_fine) / length(nodes_fine) # middle point of the current fine cell
@@ -501,7 +667,7 @@ function complete_simulation(type)
             #!
 
             #e_coarse = argmin([abs(sum(X_array[i][(e-1)*nodes + 1 : e*nodes])/nodes - center_fine) for e in 1:ns[i]])
-            q_coarse_cell = results[i][(e_coarse-1)*nodes + 1 : e_coarse*nodes]
+            u_coarse_cell = results[i][(e_coarse-1)*nodes + 1 : e_coarse*nodes]
 
             # Where is the fine cell located in relation to the center of the coarse cell?
             # center_fine is the middle point of the fine cell
@@ -521,23 +687,24 @@ function complete_simulation(type)
                 #println("")
 
             # interpolation: 
-            q_coarse_gauss = interpolate(gauss_nodes_for_coarse, q_coarse_cell, LobattoLegendre(polydeg))
+            u_coarse_gauss = interpolate(gauss_nodes_for_coarse, u_coarse_cell, LobattoLegendre(polydeg))
 
-            err += 0.5*h*sum( Gauss_weights .* (q_coarse_gauss .- q_fine_gauss) .^2 ) # squared L2-norm
+            #err += 0.5*h*sum( Gauss_weights .* (u_coarse_gauss .- u_fine_gauss) .^2 ) # squared L2-norm
+            err += 0.5 * h * sum(Gauss_weights .* abs.(u_coarse_gauss .- u_fine_gauss))
         end
-        println("Fehler zwischen n=$(ns[i]) und n=$(ns[i+1]): ", sqrt(err))
+        println("Fehler zwischen n=$(ns[i]) und n=$(ns[i+1]): ", err)
         push!(errors, sqrt(err))
     end
-
-    # EOC calculation now remains the same as for the LLF flux
+    
+    # EOC calculation now remains consistent with the LLF flow
     eocs = []
     for i in 1:(length(errors)-1)
         push!(eocs, log2(errors[i] / errors[i+1]))
     end
 
-    println("n values: ", ns[1:end-1])
-    println("errors:  ", round.(errors, digits=6))
-    println("EOCs:    ", [NaN; round.(eocs, digits=3)]) # first n has no order yet
+    println("n-Werte: ", ns[1:end-1])
+    println("Fehler:  ", round.(errors, digits=6))
+    println("EOCs:    ", [NaN; round.(eocs, digits=3)]) # Erstes n hat noch keine Ordnung
 
     p_conv = plot(ns[2:end], errors, 
                   xscale=:log10, yscale=:log10, 
@@ -545,7 +712,8 @@ function complete_simulation(type)
                   title="Mesh Convergence Study",
                   xlabel="n (number of intervals)", ylabel="||u_h - u_h/2||")
     display(p_conv)
-    savefig("plots_dgsem/$(type)_dgsem_konvergenz_studie_$(current_var_name)_.png")    
+    savefig("plots_dgsem/$(type)_dgsem_konvergenz_studie_$(current_var_name)_.png")
+    
 end
 
 function main()
@@ -565,8 +733,3 @@ function main()
         println("Ungültige Eingabe! Bitte 1, 2 oder 3 wählen.")
     end
 end
-#! test case 2 (Neumann condition)
-# polydeg = 2, for n=2 I get a rather jagged solution curve at the end.
-# polydeg = 1, for n=2 AND n=4 AND n=8 I get jagged solution curves, at n=16 the laptop freezes
-# polydeg = 3, for all n no solution curve, only an empty image
-# heatmaps: for polydeg 1,2,3 maybe take a heatmap of one variable (the density)
